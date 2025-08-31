@@ -15,7 +15,6 @@ import gdown
 if not os.path.exists('data'):
     os.mkdir('data')
 
-# Extract file IDs from the sharing URLs and use proper gdown format
 # Full Shakespeare
 gdown.download('https://drive.google.com/uc?id=1rxLEHGWfr8dekjOk3U9KXS_CukEKrIZm', 'data/Shakespeare_clean_full.txt', quiet=False)
 
@@ -2390,10 +2389,11 @@ While our GPT models didn't surpass classical n-grams in perplexity metrics, the
 The results underscore that in NLP, as in many domains, the right tool depends critically on the scale and nature of your data. Classical methods remain surprisingly competitive for constrained domains, while neural approaches promise superior performance at scale.
 """
 
-import time
-while True:
-    time.sleep(500)
+# import time
+# while True:
+#     time.sleep(500)
 
-!ls /content/task3
+"""## Extrinsic Evaluation (text-generation) of the 3 Models
 
-!ls /content/task4
+You can access the Hugging Face Space [here](https://huggingface.co/spaces/ahk-d/shakespeare-gpt).
+"""
