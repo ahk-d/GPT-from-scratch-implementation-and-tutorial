@@ -13,7 +13,7 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.01                       # 0.01=1%, 0.1=10%, 1.0=full - Using 1% for faster testing
+PERCENTAGE = 0.1                        # 0.01=1%, 0.1=10%, 1.0=full - Using 10% for better results
 MERGE_COUNTS = [1000, 2000]  # Only 1000 and 2000 merge counts
 NORMALIZATION_TECHNIQUES = ["lower_nopunct", "aggressive"]  # Simplified as requested
 
