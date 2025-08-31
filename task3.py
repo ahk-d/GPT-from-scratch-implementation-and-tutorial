@@ -16,11 +16,11 @@ from utils import load_and_slice_data, load_cached_bpe, save_results, GEN_CONTEX
 # Config
 PERCENTAGE = 1
 BEST_NORMALIZATION = "lower_nopunct"
-MERGE_COUNTS = [1000, 2000]   # Only test one merge count
+MERGE_COUNTS = [1000, 2000, 3000, 5000]   # Only test one merge count
 EMBEDDING_DIMS = [64]   # Only test one embedding dim
 BATCH_SIZES = [32]
 LEARNING_RATES = [5e-4, 1e-4, 5e-5] # Only test one learning rate
-MAX_ITERATIONS = 2000   # Reduced iterations
+MAX_ITERATIONS = 5000   # Reduced iterations
 EARLY_STOPPING_PATIENCE = 500
 WEIGHT_DECAY_VALUES = [1e-5]
 VALIDATION_INTERVAL = 100

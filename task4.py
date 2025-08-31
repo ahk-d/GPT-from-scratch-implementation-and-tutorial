@@ -17,10 +17,10 @@ from utils import load_and_slice_data, load_cached_bpe, save_results, GEN_CONTEX
 # Config
 PERCENTAGE = 1  # Tiny percentage for testing
 BEST_NORMALIZATION = "lower_nopunct"
-MERGE_COUNTS = [1000, 2000]  # Only test one merge count
+MERGE_COUNTS = [1000, 2000, 3000, 5000]  # Only test one merge count
 BATCH_SIZE = 16  # Smaller batch for testing
 LEARNING_RATE = 3e-4
-MAX_ITERATIONS = 500  # Reduced for testing
+MAX_ITERATIONS = 2000  # Reduced for testing
 EARLY_STOPPING_PATIENCE = 200
 VALIDATION_INTERVAL = 50
 
