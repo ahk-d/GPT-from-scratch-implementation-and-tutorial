@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Simplified Text Generation Script
-Supports: N-gram models, Neural Bigram models, and GPT models
+Simple Text Generation Script
 Usage: 
-  python generate_text.py --model task2_ngram_2000 --context "text"
-  python generate_text.py --model task3_neural_bigram_2000 --context "text"  
-  python generate_text.py --model task4_gpt_2000 --context "text"
-  python generate_text.py --compare --context "text"
+  python generate_text.py --task 2 --context "text"
+  python generate_text.py --task 3 --context "text"  
+  python generate_text.py --task 4 --context "text"
+  python generate_text.py --all --context "text"
   python generate_text.py --list
 """
 
@@ -14,10 +13,7 @@ import argparse
 import pickle
 import torch
 import numpy as np
-import os
 import glob
-from collections import Counter
-
 from utils import load_cached_bpe
 
 def show_available_models():
@@ -44,7 +40,7 @@ def show_available_models():
         print("Neural Bigram models: None found")
     
     # GPT models
-    gpt_files = glob.glob("gpt_model_merge*.pt")
+    gpt_files = glob.glob("gpt_model_*.pt")
     if gpt_files:
         print(f"GPT models: {len(gpt_files)} files")
         for f in sorted(gpt_files):
@@ -54,174 +50,7 @@ def show_available_models():
     
     print("=" * 50)
 
-def import_models():
-    """Import model classes"""
-    try:
-        from task2 import NGramLanguageModel
-        print("Successfully imported NGramLanguageModel from task2")
-    except ImportError as e:
-        print(f"Import error for task2: {e}")
-        NGramLanguageModel = None
-    
-    try:
-        from task3 import NeuralBigramModel  
-        print("Successfully imported NeuralBigramModel from task3")
-    except ImportError as e:
-        print(f"Import error for task3: {e}")
-        NeuralBigramModel = None
-    
-    try:
-        from task4 import GPTModel
-        print("Successfully imported GPTModel from task4")
-    except ImportError as e:
-        print(f"Import error for task4: {e}")
-        GPTModel = None
-    
-    return NGramLanguageModel, NeuralBigramModel, GPTModel
-
-def load_ngram_model(merge_count, n_order=None):
-    """Load N-gram model from saved data"""
-    try:
-        NGramLanguageModel, _, _ = import_models()
-        if NGramLanguageModel is None:
-            return None, None, None
-        
-        # Find model files
-        pattern = f"task2_{merge_count}_*.pkl"
-        model_files = glob.glob(pattern)
-        
-        if not model_files:
-            print(f"No n-gram model files found for {merge_count} merges")
-            return None, None, None
-        
-        print(f"Found {len(model_files)} n-gram model files")
-        
-        # Find the specific n-gram order if requested
-        if n_order is not None:
-            target_file = f"task2_{merge_count}_{n_order}.pkl"
-            if target_file in model_files:
-                model_file = target_file
-                n_value = n_order
-            else:
-                print(f"Requested n-gram order {n_order} not found. Available orders: {[int(f.split('_')[-1].replace('.pkl', '')) for f in model_files]}")
-                return None, None, None
-        else:
-            # Load the first available model
-            model_file = model_files[0]
-            n_value = int(model_file.split('_')[-1].replace('.pkl', ''))
-            print(f"Loading first available model (n={n_value})")
-        
-        print(f"Loading: {model_file} (n={n_value})")
-        
-        # Create new model and load data
-        model = NGramLanguageModel(n_value, 1.0)  # n_order, alpha
-        
-        with open(model_file, 'rb') as f:
-            data = pickle.load(f)
-        
-        # Load model attributes
-        model.ngram_counts = data['ngram_counts']
-        model.context_counts = data['context_counts']
-        model.interpolation_weights = np.array(data['interpolation_weights'])
-        model.vocab_size = data['vocab_size']
-        model.alpha = data['alpha']
-        model.unk_strategy = data['unk_strategy']
-        
-        print(f"Successfully loaded n-gram model with n={n_value}")
-        return model, n_value, None
-        
-    except Exception as e:
-        print(f"Could not load N-gram model: {e}")
-        return None, None, None
-
-def load_neural_bigram_model(merge_count):
-    """Load Neural Bigram model from saved checkpoint"""
-    try:
-        _, NeuralBigramModel, _ = import_models()
-        if NeuralBigramModel is None:
-            return None, None, None
-        
-        # Find final model files
-        pattern = f"task3_{merge_count}_emb_dim=*_final.pt"
-        model_files = glob.glob(pattern)
-        
-        if not model_files:
-            print(f"No neural bigram model files found for {merge_count} merges")
-            return None, None, None
-        
-        model_file = model_files[0]
-        print(f"Loading: {model_file}")
-        
-        # Extract configuration from filename
-        parts = model_file.replace('.pt', '').split('_')
-        emb_dim = int([p for p in parts if p.startswith('emb_dim=')][0].split('=')[1])
-        
-        # Load BPE for vocab size
-        bpe = load_cached_bpe(merge_count, "lower_nopunct")
-        if bpe is None:
-            return None, None, None
-        
-        vocab_size = len(bpe.vocab)
-        print(f"Creating neural bigram model: vocab_size={vocab_size}, emb_dim={emb_dim}")
-        
-        # Create and load model
-        model = NeuralBigramModel(vocab_size, emb_dim)
-        checkpoint = torch.load(model_file, map_location='cpu')
-        model.load_state_dict(checkpoint)
-        model.eval()
-        
-        print(f"Successfully loaded neural bigram model")
-        return model, f"emb_dim={emb_dim}", None
-        
-    except Exception as e:
-        print(f"Could not load Neural Bigram model: {e}")
-        return None, None, None
-
-def load_gpt_model(merge_count):
-    """Load GPT model from saved checkpoint"""
-    try:
-        # Find GPT model files
-        pattern = f"gpt_model_merge{merge_count}_gpt_*.pt"
-        model_files = glob.glob(pattern)
-        
-        if not model_files:
-            print(f"No GPT model files found for {merge_count} merges")
-            return None, None, None
-        
-        model_file = model_files[0]
-        print(f"Loading: {model_file}")
-        
-        # Load checkpoint
-        checkpoint = torch.load(model_file, map_location='cpu')
-        config = checkpoint.get('model_config', checkpoint.get('config'))
-        vocab_size = checkpoint.get('vocab_size')
-        
-        if not config or not vocab_size:
-            print("ERROR: Incomplete checkpoint data")
-            return None, None, None
-        
-        # Import and create model
-        from task4 import GPTModel
-        model = GPTModel(
-            vocab_size=vocab_size,
-            n_embd=config['n_embd'],
-            n_head=config['n_head'],
-            n_layer=config['n_layer'],
-            chunk_size=config['chunk_size'],
-            dropout=config.get('dropout', 0.1)
-        )
-        
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.eval()
-        
-        print(f"Successfully loaded GPT model")
-        return model, config, None
-        
-    except Exception as e:
-        print(f"Could not load GPT model: {e}")
-        return None, None, None
-
-def generate_text_ngram(model, bpe, context, max_tokens=50, temperature=0.8):
+def generate_text_ngram(model, bpe, context, max_tokens=30, temperature=0.8):
     """Generate text using N-gram model"""
     context_tokens = bpe.encode(context, norm='lower_nopunct')
     generated_tokens = context_tokens.copy()
@@ -261,7 +90,7 @@ def generate_text_ngram(model, bpe, context, max_tokens=50, temperature=0.8):
     
     return bpe.decode(generated_tokens)
 
-def generate_text_neural_bigram(model, bpe, context, max_tokens=50, temperature=0.8):
+def generate_text_neural_bigram(model, bpe, context, max_tokens=30, temperature=0.8):
     """Generate text using Neural Bigram model"""
     model.eval()
     
@@ -304,7 +133,7 @@ def generate_text_neural_bigram(model, bpe, context, max_tokens=50, temperature=
     generated_tokens = [bpe.id2token.get(id, "<UNK>") for id in generated_ids]
     return bpe.decode(generated_tokens)
 
-def generate_text_gpt(model, bpe, context, max_tokens=50, temperature=0.8, top_k=50, top_p=0.9):
+def generate_text_gpt(model, bpe, context, max_tokens=30, temperature=0.8):
     """Generate text using GPT model"""
     model.eval()
     
@@ -316,8 +145,7 @@ def generate_text_gpt(model, bpe, context, max_tokens=50, temperature=0.8, top_k
     
     try:
         generated_ids = model.generate(
-            context_ids, max_tokens, temperature=temperature, 
-            top_k=top_k, top_p=top_p
+            context_ids, max_tokens, temperature=temperature
         )
         generated_tokens = [bpe.id2token.get(id, "<UNK>") for id in generated_ids]
         return bpe.decode(generated_tokens)
@@ -326,13 +154,12 @@ def generate_text_gpt(model, bpe, context, max_tokens=50, temperature=0.8, top_k
         return context
 
 def main():
-    parser = argparse.ArgumentParser(description='Text generation with trained models')
-    parser.add_argument('--model', help='Model: task2_ngram_2000, task3_neural_bigram_2000, task4_gpt_2000')
+    parser = argparse.ArgumentParser(description='Simple text generation')
+    parser.add_argument('--task', type=int, help='Task: 2 (N-gram), 3 (Neural), 4 (GPT)')
+    parser.add_argument('--all', action='store_true', help='Generate from all available trained models')
     parser.add_argument('--context', default="to be or not to be", help='Context text')
     parser.add_argument('--max_tokens', type=int, default=30, help='Max tokens to generate')
     parser.add_argument('--temperature', type=float, default=0.8, help='Sampling temperature')
-    parser.add_argument('--top_k', type=int, default=50, help='Top-k sampling (GPT only)')
-    parser.add_argument('--top_p', type=float, default=0.9, help='Top-p sampling (GPT only)')
     parser.add_argument('--list', action='store_true', help='List all available model files')
     
     args = parser.parse_args()
@@ -341,75 +168,360 @@ def main():
         show_available_models()
         return
     
-    if not args.model:
-        print("ERROR: Must specify --model")
+    if not args.task and not args.all:
+        print("ERROR: Must specify --task (2, 3, or 4) or --all")
         print("Examples:")
-        print("  python generate_text.py --model task2_ngram_2000 --context 'hello world'")
-        print("  python generate_text.py --model task3_neural_bigram_2000 --context 'hello world'")
-        print("  python generate_text.py --model task4_gpt_2000 --context 'hello world'")
+        print("  python generate_text.py --task 2 --context 'hello world'")
+        print("  python generate_text.py --task 3 --context 'hello world'")
+        print("  python generate_text.py --task 4 --context 'hello world'")
+        print("  python generate_text.py --all --context 'hello world'")
         print("  python generate_text.py --list")
         return
     
-    # Parse model specification
-    parts = args.model.split('_')
-    if len(parts) < 3:
-        print("ERROR: Invalid model format. Expected: taskN_mergecount_ngramorder")
-        return
-    
-    task_num = int(parts[0].replace('task', ''))
-    merge_count = int(parts[1])  # The merge count is the second part, not the last
-    
-    print(f"Generating with {args.model}")
-    print(f"Context: '{args.context}'")
-    print(f"Settings: max_tokens={args.max_tokens}, temperature={args.temperature}")
-    if task_num == 4:
-        print(f"GPT settings: top_k={args.top_k}, top_p={args.top_p}")
-    print("-" * 50)
-    
-    # Load BPE
-    bpe = load_cached_bpe(merge_count, "lower_nopunct")
-    if bpe is None:
-        print(f"ERROR: No BPE model found for {merge_count} merges. Run task1.py first.")
-        return
+    if args.all:
+        print(f"Generating from ALL available trained models...")
+        print(f"Context: '{args.context}'")
+        print(f"Max tokens: {args.max_tokens}, Temperature: {args.temperature}")
+        print("=" * 60)
+    else:
+        print(f"Task {args.task}: Generating text from '{args.context}'")
+        print(f"Max tokens: {args.max_tokens}, Temperature: {args.temperature}")
+        print("-" * 50)
     
     try:
-        if task_num == 2:
-            # Extract n-gram order from model name (last part after underscore)
-            n_order = int(parts[-1]) if len(parts) >= 3 else None
-            model, config, perplexity = load_ngram_model(merge_count, n_order)
-            if model:
-                generated = generate_text_ngram(model, bpe, args.context, args.max_tokens, args.temperature)
-                print(f"Generated: {generated}")
+        if args.all:
+            # Generate from all available trained models
+            # Task 2: N-gram models
+            all_ngram_files = glob.glob("task2_*.pkl")
+            ngram_files = [f for f in all_ngram_files if not f.endswith('_results.pkl') and not f.endswith('_final.pkl')]
+            if ngram_files:
+                print(f"\n--- TASK 2: N-gram Models ({len(ngram_files)} found) ---")
+                for model_file in sorted(ngram_files):
+                    print(f"\nLoading: {model_file}")
+                    try:
+                        # Extract merge count from filename
+                        merge_count = 2000  # default
+                        if '_' in model_file:
+                            parts = model_file.split('_')
+                            if len(parts) >= 2 and parts[1].isdigit():
+                                merge_count = int(parts[1])
+                        
+                        print(f"Extracted: merge_count={merge_count}")
+                        
+                        # Load BPE with the correct merge count
+                        bpe = load_cached_bpe(merge_count, "lower_nopunct")
+                        if not bpe:
+                            print(f"ERROR: No BPE model found for {merge_count} merges. Skipping...")
+                            continue
+                        
+                        # Load model
+                        from task2 import NGramLanguageModel
+                        with open(model_file, 'rb') as f:
+                            data = pickle.load(f)
+                        
+                        n_order = int(model_file.split('_')[-1].replace('.pkl', ''))
+                        model = NGramLanguageModel(n_order, 1.0)
+                        model.ngram_counts = data['ngram_counts']
+                        model.context_counts = data['context_counts']
+                        model.interpolation_weights = data['interpolation_weights']
+                        model.vocab_size = data['vocab_size']
+                        
+                        generated = generate_text_ngram(model, bpe, args.context, args.max_tokens, args.temperature)
+                        print(f"Generated: {generated}")
+                        
+                    except Exception as e:
+                        print(f"ERROR loading {model_file}: {e}")
+                        continue
             else:
-                print("ERROR: Could not load N-gram model")
-        
-        elif task_num == 3:
-            model, config, perplexity = load_neural_bigram_model(merge_count)
-            if model:
-                generated = generate_text_neural_bigram(model, bpe, args.context, args.max_tokens, args.temperature)
-                print(f"Generated: {generated}")
-                print(f"Model config: {config}")
+                print("\n--- TASK 2: No N-gram models found ---")
+            
+            # Task 3: Neural Bigram models
+            neural_files = glob.glob("task3_*_final.pt")
+            if neural_files:
+                print(f"\n--- TASK 3: Neural Bigram Models ({len(neural_files)} found) ---")
+                for model_file in sorted(neural_files):
+                    print(f"\nLoading: {model_file}")
+                    try:
+                        # Parse merge_count and emb_dim from filename
+                        import re
+                        m = re.search(r"task3_(\d+)_emb_dim=(\d+)_", model_file)
+                        if not m:
+                            print(f"ERROR: Could not parse merge_count/emb_dim from {model_file}. Skipping...")
+                            continue
+                        
+                        merge_count = int(m.group(1))
+                        emb_dim = int(m.group(2))
+                        
+                        # Load the matching BPE cache
+                        bpe = load_cached_bpe(merge_count, "lower_nopunct")
+                        if not bpe:
+                            print(f"ERROR: No BPE cache for {merge_count} merges. Skipping...")
+                            continue
+                        
+                        # Build model with matching vocab size and embedding dim
+                        from task3 import NeuralBigramModel
+                        vocab_size = len(bpe.vocab)
+                        model = NeuralBigramModel(vocab_size, emb_dim)
+                        
+                        # Load checkpoint safely
+                        checkpoint = torch.load(model_file, map_location='cpu')
+                        model.load_state_dict(checkpoint)
+                        model.eval()
+                        
+                        generated = generate_text_neural_bigram(model, bpe, args.context, args.max_tokens, args.temperature)
+                        print(f"Generated: {generated}")
+                        
+                    except Exception as e:
+                        print(f"ERROR loading {model_file}: {e}")
+                        continue
             else:
-                print("ERROR: Could not load Neural Bigram model")
-        
-        elif task_num == 4:
-            model, config, perplexity = load_gpt_model(merge_count)
-            if model:
-                generated = generate_text_gpt(
-                    model, bpe, args.context, args.max_tokens, 
-                    args.temperature, args.top_k, args.top_p
-                )
-                print(f"Generated: {generated}")
-                if config:
-                    print(f"Model config: {config['n_layer']} layers, {config['n_embd']} dim, {config['n_head']} heads")
+                print("\n--- TASK 3: No Neural Bigram models found ---")
+            
+            # Task 4: GPT models
+            gpt_files = glob.glob("gpt_model_*.pt")
+            if gpt_files:
+                print(f"\n--- TASK 4: GPT Models ({len(gpt_files)} found) ---")
+                for model_file in sorted(gpt_files):
+                    print(f"\nLoading: {model_file}")
+                    try:
+                        # Load checkpoint first to get model configuration
+                        checkpoint = torch.load(model_file, map_location='cpu')
+                        
+                        # Extract configuration from checkpoint
+                        config = checkpoint.get('model_config', checkpoint.get('config'))
+                        vocab_size = checkpoint.get('vocab_size')
+                        
+                        if not config or not vocab_size:
+                            print(f"ERROR: Incomplete checkpoint data in {model_file}. Skipping...")
+                            continue
+                        
+                        # Extract merge count from filename
+                        merge_count = 2000  # default
+                        if 'merge' in model_file:
+                            parts = model_file.split('merge')
+                            if len(parts) >= 2 and parts[1].split('_')[0].isdigit():
+                                merge_count = int(parts[1].split('_')[0])
+                        
+                        print(f"Extracted: merge_count={merge_count}")
+                        
+                        # Load BPE with the correct merge count
+                        bpe = load_cached_bpe(merge_count, "lower_nopunct")
+                        if not bpe:
+                            print(f"ERROR: No BPE model found for {merge_count} merges. Skipping...")
+                            continue
+                        
+                        # Create model with checkpoint configuration
+                        from task4 import GPTModel
+                        model = GPTModel(
+                            vocab_size=vocab_size,  # Use checkpoint vocab size
+                            n_embd=config['n_embd'],
+                            n_head=config['n_head'],
+                            n_layer=config['n_layer'],
+                            chunk_size=config['chunk_size']
+                        )
+                        
+                        # Try to load the checkpoint
+                        try:
+                            model.load_state_dict(checkpoint['model_state_dict'])
+                            print(f"Successfully loaded GPT model with vocab_size={vocab_size}")
+                        except RuntimeError as e:
+                            print(f"ERROR: Checkpoint size mismatch: {e}")
+                            continue
+                        
+                        model.eval()
+                        
+                        generated = generate_text_gpt(model, bpe, args.context, args.max_tokens, args.temperature)
+                        print(f"Generated: {generated}")
+                        
+                    except Exception as e:
+                        print(f"ERROR loading {model_file}: {e}")
+                        continue
             else:
-                print("ERROR: Could not load GPT model")
-        
+                print("\n--- TASK 4: No GPT models found ---")
+            
+            print("\n" + "=" * 60)
+            print("Completed generation from all available models!")
+            
+        elif args.task == 2:
+            # Find ALL n-gram model files (filter out results files)
+            all_files = glob.glob("task2_*.pkl")
+            model_files = [f for f in all_files if not f.endswith('_results.pkl') and not f.endswith('_final.pkl')]
+            
+            if not model_files:
+                print("ERROR: No task2 model files found")
+                return
+            
+            print(f"Found {len(model_files)} Task 2 models. Generating from each one...")
+            print("=" * 60)
+            
+            for i, model_file in enumerate(sorted(model_files), 1):
+                print(f"\n--- Model {i}/{len(model_files)}: {model_file} ---")
+                
+                try:
+                    # Extract merge count from filename (e.g., task2_1000_...)
+                    merge_count = 2000  # default
+                    if '_' in model_file:
+                        parts = model_file.split('_')
+                        if len(parts) >= 2 and parts[1].isdigit():
+                            merge_count = int(parts[1])
+                    
+                    print(f"Extracted: merge_count={merge_count}")
+                    
+                    # Load BPE with the correct merge count
+                    bpe = load_cached_bpe(merge_count, "lower_nopunct")
+                    if not bpe:
+                        print(f"ERROR: No BPE model found for {merge_count} merges. Skipping...")
+                        continue
+                    
+                    # Load model
+                    from task2 import NGramLanguageModel
+                    with open(model_file, 'rb') as f:
+                        data = pickle.load(f)
+                    
+                    n_order = int(model_file.split('_')[-1].replace('.pkl', ''))
+                    model = NGramLanguageModel(n_order, 1.0)
+                    model.ngram_counts = data['ngram_counts']
+                    model.context_counts = data['context_counts']
+                    model.interpolation_weights = data['interpolation_weights']
+                    model.vocab_size = data['vocab_size']
+                    
+                    generated = generate_text_ngram(model, bpe, args.context, args.max_tokens, args.temperature)
+                    print(f"Generated: {generated}")
+                    
+                except Exception as e:
+                    print(f"ERROR loading {model_file}: {e}")
+                    continue
+            
+            print(f"\n" + "=" * 60)
+            print(f"Completed generation from {len(model_files)} Task 2 models!")
+            
+        elif args.task == 3:
+            # Find ALL neural bigram model files (only final models)
+            model_files = glob.glob("task3_*_final.pt")
+            if not model_files:
+                print("ERROR: No task3 model files found")
+                return
+
+            print(f"Found {len(model_files)} Task 3 models. Generating from each one...")
+            print("=" * 60)
+            
+            for i, model_file in enumerate(sorted(model_files), 1):
+                print(f"\n--- Model {i}/{len(model_files)}: {model_file} ---")
+                
+                try:
+                    # Parse merge_count and emb_dim from filename
+                    import re
+                    m = re.search(r"task3_(\d+)_emb_dim=(\d+)_", model_file)
+                    if not m:
+                        print(f"ERROR: Could not parse merge_count/emb_dim from {model_file}. Skipping...")
+                        continue
+                    
+                    merge_count = int(m.group(1))
+                    emb_dim = int(m.group(2))
+                    
+                    print(f"Extracted: merge_count={merge_count}, emb_dim={emb_dim}")
+
+                    # Load the matching BPE cache
+                    bpe = load_cached_bpe(merge_count, "lower_nopunct")
+                    if not bpe:
+                        print(f"ERROR: No BPE cache for {merge_count} merges. Skipping...")
+                        continue
+
+                    # Build model with matching vocab size and embedding dim
+                    from task3 import NeuralBigramModel
+                    vocab_size = len(bpe.vocab)
+                    model = NeuralBigramModel(vocab_size, emb_dim)
+
+                    # Load checkpoint safely
+                    checkpoint = torch.load(model_file, map_location='cpu')
+                    model.load_state_dict(checkpoint)
+                    model.eval()
+
+                    generated = generate_text_neural_bigram(model, bpe, args.context, args.max_tokens, args.temperature)
+                    print(f"Generated: {generated}")
+                    
+                except Exception as e:
+                    print(f"ERROR loading {model_file}: {e}")
+                    continue
+            
+            print(f"\n" + "=" * 60)
+            print(f"Completed generation from {len(model_files)} Task 3 models!")
+            
+        elif args.task == 4:
+            # Find ALL GPT model files
+            model_files = glob.glob("gpt_model_*.pt")
+            if not model_files:
+                print("ERROR: No task4 model files found")
+                return
+            
+            print(f"Found {len(model_files)} Task 4 models. Generating from each one...")
+            print("=" * 60)
+            
+            for i, model_file in enumerate(sorted(model_files), 1):
+                print(f"\n--- Model {i}/{len(model_files)}: {model_file} ---")
+                
+                try:
+                    # Load checkpoint first to get model configuration
+                    checkpoint = torch.load(model_file, map_location='cpu')
+                    
+                    # Extract configuration from checkpoint
+                    config = checkpoint.get('model_config', checkpoint.get('config'))
+                    vocab_size = checkpoint.get('vocab_size')
+                    
+                    if not config or not vocab_size:
+                        print(f"ERROR: Incomplete checkpoint data in {model_file}. Skipping...")
+                        continue
+                    
+                    # Extract merge count from filename (e.g., gpt_model_merge1000_...)
+                    merge_count = 2000  # default
+                    if 'merge' in model_file:
+                        parts = model_file.split('merge')
+                        if len(parts) >= 2 and parts[1].split('_')[0].isdigit():
+                            merge_count = int(parts[1].split('_')[0])
+                    
+                    print(f"Extracted: merge_count={merge_count}")
+                    
+                    # Load BPE with the correct merge count
+                    bpe = load_cached_bpe(merge_count, "lower_nopunct")
+                    if not bpe:
+                        print(f"ERROR: No BPE model found for {merge_count} merges. Skipping...")
+                        continue
+                    
+                    # Create model with checkpoint configuration
+                    from task4 import GPTModel
+                    model = GPTModel(
+                        vocab_size=vocab_size,  # Use checkpoint vocab size
+                        n_embd=config['n_embd'],
+                        n_head=config['n_head'],
+                        n_layer=config['n_layer'],
+                        chunk_size=config['chunk_size']
+                    )
+                    
+                    # Try to load the checkpoint
+                    try:
+                        model.load_state_dict(checkpoint['model_state_dict'])
+                        print(f"Successfully loaded GPT model with vocab_size={vocab_size}")
+                    except RuntimeError as e:
+                        print(f"ERROR: Checkpoint size mismatch: {e}")
+                        continue
+                    
+                    model.eval()
+                    
+                    generated = generate_text_gpt(model, bpe, args.context, args.max_tokens, args.temperature)
+                    print(f"Generated: {generated}")
+                    
+                except Exception as e:
+                    print(f"ERROR loading {model_file}: {e}")
+                    continue
+            
+            print(f"\n" + "=" * 60)
+            print(f"Completed generation from {len(model_files)} Task 4 models!")
+            
         else:
-            print(f"ERROR: Unsupported task number: {task_num}")
-    
+            print(f"ERROR: Task {args.task} not supported")
+            
     except Exception as e:
-        print(f"ERROR: Generation failed: {e}")
+        print(f"ERROR: {e}")
         import traceback
         traceback.print_exc()
 
