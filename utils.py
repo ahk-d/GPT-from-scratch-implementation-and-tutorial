@@ -274,8 +274,14 @@ class BPE:
             text = self._norm(text, norm)
             out = []
             words = text.split()
-            for i, w in enumerate(words):
-                pieces = [*w]  # Start with individual characters
+            
+            for word in words:
+                if not word:  # Skip empty words
+                    continue
+                    
+                pieces = list(word)  # Start with individual characters
+                
+                # Apply all learned merges
                 for a, b in self.merges:
                     j = 0
                     merged = []
@@ -288,9 +294,12 @@ class BPE:
                             merged.append(pieces[j])
                             j += 1
                     pieces = merged
+                
+                # Add word pieces
                 out.extend(pieces)
                 # Add end-of-word symbol after each word
                 out.append(self.end_of_word)
+                
             return out
 
         def decode(self, tokens):
@@ -301,10 +310,32 @@ class BPE:
             Returns:
                 str: Reconstructed text
             """
-            # Join tokens and replace end-of-word symbols with spaces
-            s = "".join(tokens)
-            s = s.replace(self.end_of_word, ' ')
-            return re.sub(r"\s+", " ", s).strip()
+            if not tokens:
+                return ""
+            
+            result_words = []
+            current_word = ""
+            
+            for token in tokens:
+                if token == self.end_of_word:  # End of word marker
+                    if current_word:
+                        result_words.append(current_word)
+                        current_word = ""
+                else:
+                    # Regular token - add to current word
+                    current_word += token
+            
+            # Add any remaining word
+            if current_word:
+                result_words.append(current_word)
+            
+            # Join words with spaces
+            decoded_text = " ".join(result_words)
+            
+            # Clean up any extra spaces
+            decoded_text = " ".join(decoded_text.split())
+            
+            return decoded_text
 
         def evaluate_tpw(self, text, norm='lower_nopunct'):
             """

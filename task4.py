@@ -1,10 +1,6 @@
-# Task 4: GPT Implementation with PyTorch - FIXED VERSION
-# Key fixes:
-# 1. Proper data preparation with sufficient sequences
-# 2. Better early stopping logic
-# 3. Improved model initialization
-# 4. Fixed bigram model training
-# 5. Better learning rate scheduling
+# Task 4: Pure GPT Implementation - GPT MODELS ONLY
+# No model comparisons, no imports from other tasks
+# Just focus on implementing and training GPT (transformer) models
 
 import json
 import numpy as np
@@ -12,41 +8,46 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from collections import Counter
-import sys
-import os
 import math
-from pathlib import Path
-import seaborn as sns
+import pickle
 
-# Configuration - IMPROVED
+# Only import from utils (shared utilities)
+from utils import (
+    load_and_slice_data, save_results, load_cached_bpe
+)
+
+# Configuration
 PERCENTAGE = 0.01
-BEST_NORMALIZATION = "lower_nopunct"
+BEST_NORMALIZATION = "lower_nopunct"  
 MERGE_COUNTS = [1000, 2000]
-EMBEDDING_DIMS = [64, 128, 256]
-BATCH_SIZE = 32  # Increased batch size
-LEARNING_RATE = 3e-4  # Better learning rate for transformers
-MAX_ITERATIONS = 100  # Reduced max iterations
-MIN_IMPROVEMENT = 1e-4  # Minimum improvement for early stopping
-CHECKPOINT_SAVE_COUNT = 3
-GENERATION_CONTEXT = "to be or not to"
-GENERATION_MAX_TOKENS = 100
-TEMPERATURE = 0.8
-TOP_K = 40
+BATCH_SIZE = 32
+LEARNING_RATE = 3e-4
+MAX_ITERATIONS = 15000
+EARLY_STOPPING_PATIENCE = 2000
+VALIDATION_INTERVAL = 200
 
-# GPT Configuration - IMPROVED
-GPT_CONFIG = {
-    'n_embd': 128,      # Smaller embedding dimension for stability
-    'n_head': 4,        # Fewer attention heads
-    'n_layer': 4,       # Fewer transformer layers
-    'dropout': 0.1,
-    'chunk_size': 64,   # Smaller context length for better training
-    'weight_decay': 0.01,
-    'grad_clip': 1.0    # Gradient clipping
-}
+# GPT Configurations to test
+GPT_CONFIGS = [
+    {
+        'name': 'GPT-Small',
+        'n_embd': 256,
+        'n_head': 8, 
+        'n_layer': 6,
+        'dropout': 0.1,
+        'chunk_size': 128,
+    },
+    {
+        'name': 'GPT-Medium', 
+        'n_embd': 384,
+        'n_head': 12,
+        'n_layer': 8,
+        'dropout': 0.1,
+        'chunk_size': 256,
+    }
+]
 
 class CausalSelfAttention(nn.Module):
-    """Causal self-attention implementation from scratch"""
+    """Multi-head causal self-attention mechanism"""
     
     def __init__(self, n_embd, n_head, dropout=0.1):
         super().__init__()
@@ -56,22 +57,16 @@ class CausalSelfAttention(nn.Module):
         self.n_head = n_head
         self.head_dim = n_embd // n_head
         
-        # Linear projections for Q, K, V
+        # QKV projections
         self.query = nn.Linear(n_embd, n_embd, bias=False)
         self.key = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(n_embd, n_embd, bias=False)
-        
-        # Output projection
         self.output = nn.Linear(n_embd, n_embd)
-        
-        # Dropout
         self.dropout = nn.Dropout(dropout)
         
-        # Initialize weights properly
         self._init_weights()
         
     def _init_weights(self):
-        """Initialize weights with proper scaling"""
         nn.init.normal_(self.query.weight, mean=0.0, std=0.02)
         nn.init.normal_(self.key.weight, mean=0.0, std=0.02)
         nn.init.normal_(self.value.weight, mean=0.0, std=0.02)
@@ -81,7 +76,7 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.shape
         
-        # Project to Q, K, V
+        # Compute Q, K, V
         q = self.query(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         k = self.key(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v = self.value(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
@@ -89,25 +84,21 @@ class CausalSelfAttention(nn.Module):
         # Scaled dot-product attention
         scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         
-        # Apply causal mask
+        # Causal mask (prevent looking at future tokens)
         mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
         scores = scores.masked_fill(mask, float('-inf'))
         
-        # Apply softmax and dropout
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
+        # Attention weights and output
+        attn = F.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
         
-        # Apply attention to values
-        out = torch.matmul(attn_weights, v)
+        out = torch.matmul(attn, v)
         out = out.transpose(1, 2).contiguous().view(B, T, C)
         
-        # Output projection
-        out = self.output(out)
-        
-        return out
+        return self.output(out)
 
 class MLP(nn.Module):
-    """Multi-layer perceptron with GELU activation"""
+    """Position-wise feed-forward network"""
     
     def __init__(self, n_embd, dropout=0.1):
         super().__init__()
@@ -115,22 +106,22 @@ class MLP(nn.Module):
         self.fc2 = nn.Linear(4 * n_embd, n_embd)
         self.dropout = nn.Dropout(dropout)
         
-        # Initialize weights
+        self._init_weights()
+        
+    def _init_weights(self):
         nn.init.normal_(self.fc1.weight, mean=0.0, std=0.02)
         nn.init.normal_(self.fc2.weight, mean=0.0, std=0.02)
         nn.init.zeros_(self.fc1.bias)
         nn.init.zeros_(self.fc2.bias)
         
     def forward(self, x):
-        x = self.fc1(x)
-        x = F.gelu(x)
+        x = F.gelu(self.fc1(x))
         x = self.dropout(x)
         x = self.fc2(x)
-        x = self.dropout(x)
-        return x
+        return self.dropout(x)
 
 class TransformerBlock(nn.Module):
-    """Transformer block with causal self-attention and MLP"""
+    """Single transformer block with attention and MLP"""
     
     def __init__(self, n_embd, n_head, dropout=0.1):
         super().__init__()
@@ -140,13 +131,13 @@ class TransformerBlock(nn.Module):
         self.ln2 = nn.LayerNorm(n_embd)
         
     def forward(self, x):
-        # Pre-layer norm (more stable)
+        # Pre-layer normalization (more stable than post-layer norm)
         x = x + self.attention(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
         return x
 
 class GPTModel(nn.Module):
-    """GPT model with transformer architecture"""
+    """GPT (Generative Pre-trained Transformer) model"""
     
     def __init__(self, vocab_size, n_embd, n_head, n_layer, chunk_size, dropout=0.1):
         super().__init__()
@@ -157,203 +148,149 @@ class GPTModel(nn.Module):
         # Token and position embeddings
         self.token_embeddings = nn.Embedding(vocab_size, n_embd)
         self.position_embeddings = nn.Embedding(chunk_size, n_embd)
-        
-        # Dropout
         self.dropout = nn.Dropout(dropout)
         
-        # Transformer blocks
+        # Stack of transformer blocks
         self.blocks = nn.ModuleList([
-            TransformerBlock(n_embd, n_head, dropout) for _ in range(n_layer)
+            TransformerBlock(n_embd, n_head, dropout) 
+            for _ in range(n_layer)
         ])
         
-        # Final layer norm
+        # Final layer norm and output projection
         self.ln_f = nn.LayerNorm(n_embd)
-        
-        # Output projection
         self.output_projection = nn.Linear(n_embd, vocab_size, bias=False)
         
         # Initialize weights
         self._init_weights()
         
+        # Count parameters
+        n_params = sum(p.numel() for p in self.parameters())
+        print(f"GPT Model created: {n_params:,} parameters")
+        
     def _init_weights(self):
-        """Initialize weights with proper scaling"""
+        """Initialize weights using GPT-2 style initialization"""
         nn.init.normal_(self.token_embeddings.weight, mean=0.0, std=0.02)
         nn.init.normal_(self.position_embeddings.weight, mean=0.0, std=0.01)
         nn.init.normal_(self.output_projection.weight, mean=0.0, std=0.02)
         
     def forward(self, input_tokens):
+        """
+        Forward pass
+        Args:
+            input_tokens: (batch_size, sequence_length) tensor of token IDs
+        Returns:
+            logits: (batch_size, sequence_length, vocab_size) tensor
+        """
         B, T = input_tokens.shape
+        assert T <= self.chunk_size, f"Sequence length {T} exceeds chunk_size {self.chunk_size}"
         
         # Get embeddings
-        token_emb = self.token_embeddings(input_tokens)
-        pos_emb = self.position_embeddings(torch.arange(T, device=input_tokens.device))
+        token_emb = self.token_embeddings(input_tokens)  # (B, T, n_embd)
+        pos_emb = self.position_embeddings(torch.arange(T, device=input_tokens.device))  # (T, n_embd)
         
-        # Add embeddings with scaling
-        x = self.dropout(token_emb + pos_emb)
+        # Combine embeddings
+        x = self.dropout(token_emb + pos_emb)  # (B, T, n_embd)
         
         # Pass through transformer blocks
         for block in self.blocks:
             x = block(x)
         
-        # Final layer norm
-        x = self.ln_f(x)
-        
-        # Output projection
-        logits = self.output_projection(x)
+        # Final layer norm and projection to vocabulary
+        x = self.ln_f(x)  # (B, T, n_embd)
+        logits = self.output_projection(x)  # (B, T, vocab_size)
         
         return logits
     
     def calculate_loss(self, input_tokens, target_tokens):
-        logits = self.forward(input_tokens)
+        """Calculate cross-entropy loss for language modeling"""
+        logits = self.forward(input_tokens)  # (B, T, vocab_size)
         B, T, C = logits.shape
+        
+        # Flatten for cross-entropy
         logits_flat = logits.view(B * T, C)
         targets_flat = target_tokens.view(B * T)
+        
         loss = F.cross_entropy(logits_flat, targets_flat)
         return loss
     
     def calculate_perplexity(self, input_tokens, target_tokens):
+        """Calculate perplexity"""
         with torch.no_grad():
             loss = self.calculate_loss(input_tokens, target_tokens)
             perplexity = torch.exp(loss).item()
         return perplexity
     
-    def generate(self, context_tokens, max_tokens, temperature=1.0, top_k=None):
+    def generate(self, context_tokens, max_tokens, temperature=1.0, top_k=50, top_p=0.9):
+        """
+        Generate text using the GPT model
+        Args:
+            context_tokens: List of token IDs to start with
+            max_tokens: Maximum number of tokens to generate
+            temperature: Sampling temperature (higher = more random)
+            top_k: Keep only top k tokens for sampling
+            top_p: Keep tokens with cumulative probability <= top_p
+        Returns:
+            List of token IDs (including context)
+        """
         self.eval()
         generated = context_tokens.copy()
         device = next(self.parameters()).device
         
         with torch.no_grad():
             for _ in range(max_tokens):
-                input_seq = torch.tensor(generated[-self.chunk_size:], dtype=torch.long, device=device)
-                input_seq = input_seq.unsqueeze(0)
+                # Use last chunk_size tokens as context
+                input_seq = torch.tensor(generated[-self.chunk_size:], 
+                                       dtype=torch.long, device=device).unsqueeze(0)
                 
-                logits = self.forward(input_seq)
-                logits = logits[0, -1, :] / temperature
+                # Get logits for next token
+                logits = self.forward(input_seq)[0, -1, :]  # (vocab_size,)
                 
-                if top_k is not None:
-                    top_k_logits, top_k_indices = torch.topk(logits, top_k)
+                # Apply temperature
+                if temperature != 1.0:
+                    logits = logits / temperature
+                
+                # Apply top-k filtering
+                if top_k > 0:
+                    top_k_logits, top_k_indices = torch.topk(logits, min(top_k, logits.size(-1)))
                     logits = torch.full_like(logits, float('-inf'))
                     logits[top_k_indices] = top_k_logits
                 
+                # Apply top-p (nucleus) filtering  
+                if top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                    
+                    # Remove tokens with cumulative probability above threshold
+                    sorted_indices_to_remove = cumulative_probs > top_p
+                    sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
+                    sorted_indices_to_remove[0] = 0
+                    
+                    indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                    logits[indices_to_remove] = float('-inf')
+                
+                # Sample from the filtered distribution
                 probs = F.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, 1).item()
                 generated.append(next_token)
-                
-                # Stop if we hit a reasonable stopping point
-                if len(generated) > len(context_tokens) + 10 and next_token == 0:
-                    break
         
         return generated
 
-class NeuralBigramModel(nn.Module):
-    """Improved neural bigram model"""
-    
-    def __init__(self, vocab_size, embedding_dim):
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.embedding_dim = embedding_dim
-        
-        # Embeddings
-        self.token_embeddings = nn.Embedding(vocab_size, embedding_dim)
-        
-        # Hidden layers for better modeling
-        self.hidden1 = nn.Linear(embedding_dim, embedding_dim)
-        self.hidden2 = nn.Linear(embedding_dim, embedding_dim)
-        self.output_projection = nn.Linear(embedding_dim, vocab_size)
-        
-        # Dropout
-        self.dropout = nn.Dropout(0.1)
-        
-        # Initialize weights
-        self._init_weights()
-        
-    def _init_weights(self):
-        nn.init.normal_(self.token_embeddings.weight, mean=0.0, std=0.02)
-        nn.init.xavier_uniform_(self.hidden1.weight)
-        nn.init.xavier_uniform_(self.hidden2.weight)
-        nn.init.xavier_uniform_(self.output_projection.weight)
-        nn.init.zeros_(self.hidden1.bias)
-        nn.init.zeros_(self.hidden2.bias)
-        nn.init.zeros_(self.output_projection.bias)
-        
-    def forward(self, input_tokens):
-        # Handle different input shapes
-        if len(input_tokens.shape) == 1:
-            input_tokens = input_tokens.unsqueeze(1)
-        
-        embeddings = self.token_embeddings(input_tokens)
-        
-        # Pass through hidden layers
-        x = F.relu(self.hidden1(embeddings))
-        x = self.dropout(x)
-        x = F.relu(self.hidden2(x))
-        x = self.dropout(x)
-        
-        logits = self.output_projection(x)
-        return logits
-    
-    def calculate_loss(self, input_tokens, target_tokens):
-        logits = self.forward(input_tokens)
-        if len(logits.shape) == 3:
-            B, T, C = logits.shape
-            logits_flat = logits.view(B * T, C)
-            targets_flat = target_tokens.view(B * T)
-        else:
-            logits_flat = logits
-            targets_flat = target_tokens
-        
-        loss = F.cross_entropy(logits_flat, targets_flat)
-        return loss
-    
-    def calculate_perplexity(self, input_tokens, target_tokens):
-        with torch.no_grad():
-            loss = self.calculate_loss(input_tokens, target_tokens)
-            perplexity = torch.exp(loss).item()
-        return perplexity
-
-def prepare_data_for_bigram_training(token_stream, batch_size):
-    """FIXED: Better data preparation for bigram training"""
-    if len(token_stream) < 2:
-        return [], []
-    
-    # Create bigram pairs
-    bigram_pairs = [(token_stream[i], token_stream[i + 1]) 
-                   for i in range(len(token_stream) - 1)]
-    
-    # Shuffle pairs for better training
-    np.random.shuffle(bigram_pairs)
-    
-    # Create batches
-    prev_token_batches = []
-    next_token_batches = []
-    
-    for i in range(0, len(bigram_pairs), batch_size):
-        batch_pairs = bigram_pairs[i:i + batch_size]
-        
-        if len(batch_pairs) >= batch_size // 2:  # Allow smaller batches
-            prev_tokens = torch.tensor([pair[0] for pair in batch_pairs], dtype=torch.long)
-            next_tokens = torch.tensor([pair[1] for pair in batch_pairs], dtype=torch.long)
-            
-            prev_token_batches.append(prev_tokens)
-            next_token_batches.append(next_tokens)
-    
-    return prev_token_batches, next_token_batches
-
-def prepare_data_for_gpt_training(token_stream, chunk_size, batch_size):
-    """FIXED: Better data preparation for GPT training"""
+def prepare_gpt_data(token_stream, chunk_size, batch_size):
+    """Prepare sequences for GPT training"""
     if len(token_stream) < chunk_size + 1:
+        print(f"Warning: Token stream too short ({len(token_stream)}) for chunk size {chunk_size}")
         return [], []
     
     # Create overlapping sequences for better data utilization
     sequences = []
-    stride = chunk_size // 2  # 50% overlap
+    stride = chunk_size // 4  # 75% overlap
     
     for i in range(0, len(token_stream) - chunk_size, stride):
         sequence = token_stream[i:i + chunk_size + 1]
         if len(sequence) == chunk_size + 1:
             sequences.append(sequence)
     
-    # Shuffle sequences
+    print(f"Created {len(sequences)} training sequences")
     np.random.shuffle(sequences)
     
     # Create batches
@@ -362,453 +299,270 @@ def prepare_data_for_gpt_training(token_stream, chunk_size, batch_size):
     
     for i in range(0, len(sequences), batch_size):
         batch_sequences = sequences[i:i + batch_size]
-        
-        if len(batch_sequences) >= batch_size // 2:  # Allow smaller batches
+        if len(batch_sequences) >= batch_size // 2:  # Allow smaller final batch
             batch_input = torch.tensor([seq[:-1] for seq in batch_sequences], dtype=torch.long)
             batch_target = torch.tensor([seq[1:] for seq in batch_sequences], dtype=torch.long)
-            
             input_batches.append(batch_input)
             target_batches.append(batch_target)
     
+    print(f"Created {len(input_batches)} training batches")
     return input_batches, target_batches
 
-def train_neural_model(model, input_batches, target_batches, optimizer, max_iterations, 
-                      device, min_improvement=MIN_IMPROVEMENT, validation_batches=None, 
-                      patience=500, validation_interval=100):
-    """IMPROVED: Training loop with early stopping and overfitting detection"""
+def train_gpt_model(model, train_batches, target_batches, valid_batches, valid_target_batches, optimizer, max_iterations, device):
+    """Train GPT model with validation monitoring"""
     model.train()
     model.to(device)
     
-    if len(input_batches) == 0:
-        print("No training batches available!")
-        return {'losses': [], 'perplexities': [], 'val_losses': [], 'val_perplexities': []}
-    
-    history = {'losses': [], 'perplexities': [], 'val_losses': [], 'val_perplexities': []}
+    history = {'losses': [], 'val_losses': [], 'perplexities': [], 'val_perplexities': []}
     best_val_loss = float('inf')
     patience_counter = 0
     best_model_state = None
     
-    print(f"Training with {len(input_batches)} batches for {max_iterations} iterations")
+    print(f"Starting training with {len(train_batches)} training batches")
     
     for iteration in range(max_iterations):
-        # Sample random batch
-        batch_idx = np.random.randint(0, len(input_batches))
-        input_batch = input_batches[batch_idx].to(device)
+        # Sample random training batch
+        batch_idx = np.random.randint(0, len(train_batches))
+        input_batch = train_batches[batch_idx].to(device)
         target_batch = target_batches[batch_idx].to(device)
         
-        # Forward pass
+        # Training step
         optimizer.zero_grad()
         loss = model.calculate_loss(input_batch, target_batch)
         
-        # Check for NaN loss
         if torch.isnan(loss):
-            print(f"NaN loss detected at iteration {iteration}")
+            print(f"NaN loss at iteration {iteration}! Stopping.")
             break
         
-        # Backward pass with gradient clipping
         loss.backward()
-        if hasattr(GPT_CONFIG, 'grad_clip'):
-            torch.nn.utils.clip_grad_norm_(model.parameters(), GPT_CONFIG['grad_clip'])
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         
         # Record metrics
-        loss_value = loss.item()
-        history['losses'].append(loss_value)
-        perplexity = torch.exp(loss).item()
-        history['perplexities'].append(perplexity)
+        loss_val = loss.item()
+        history['losses'].append(loss_val)
+        history['perplexities'].append(math.exp(loss_val))
         
-        # Validation check and early stopping
-        if validation_batches and iteration % validation_interval == 0:
+        # Validation check
+        if iteration % VALIDATION_INTERVAL == 0:
             model.eval()
             val_loss = 0.0
-            val_batches_evaluated = 0
+            val_batches_used = 0
             
             with torch.no_grad():
-                for val_input, val_target in validation_batches[:5]:  # Sample validation batches
+                # Use subset of validation batches for speed
+                for val_input, val_target in zip(valid_batches[:10], valid_target_batches[:10]):
                     val_input = val_input.to(device)
                     val_target = val_target.to(device)
-                    val_batch_loss = model.calculate_loss(val_input, val_target)
-                    if not torch.isnan(val_batch_loss):
-                        val_loss += val_batch_loss.item()
-                        val_batches_evaluated += 1
+                    batch_val_loss = model.calculate_loss(val_input, val_target)
+                    
+                    if not torch.isnan(batch_val_loss):
+                        val_loss += batch_val_loss.item()
+                        val_batches_used += 1
             
-            if val_batches_evaluated > 0:
-                val_loss /= val_batches_evaluated
+            if val_batches_used > 0:
+                val_loss /= val_batches_used
                 val_perplexity = math.exp(val_loss)
+                
                 history['val_losses'].append(val_loss)
                 history['val_perplexities'].append(val_perplexity)
                 
-                print(f"Iteration {iteration}: Train Loss = {loss_value:.4f}, "
-                      f"Val Loss = {val_loss:.4f}, Val Perplexity = {val_perplexity:.4f}")
+                print(f"Iter {iteration:6d}: Train Loss = {loss_val:.4f} "
+                      f"(PPL = {math.exp(loss_val):6.1f}), "
+                      f"Val Loss = {val_loss:.4f} (PPL = {val_perplexity:6.1f})")
                 
-                # Early stopping logic
-                should_stop = False
-                stop_reason = ""
-                
-                # 1. Standard patience-based stopping
-                if val_loss < best_val_loss - min_improvement:
+                # Early stopping with model saving
+                if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     patience_counter = 0
                     best_model_state = model.state_dict().copy()
                 else:
-                    patience_counter += validation_interval
-                    
-                if patience_counter >= patience:
-                    should_stop = True
-                    stop_reason = f"patience exceeded ({patience})"
+                    patience_counter += VALIDATION_INTERVAL
                 
-                # 2. Overfitting detection: train loss decreasing but val loss increasing
-                if len(history['val_losses']) >= 3:
-                    recent_train_losses = history['losses'][-3:]
-                    recent_val_losses = history['val_losses'][-3:]
-                    
-                    train_decreasing = recent_train_losses[-1] < recent_train_losses[0]
-                    val_increasing = recent_val_losses[-1] > recent_val_losses[0]
-                    
-                    if train_decreasing and val_increasing:
-                        should_stop = True
-                        stop_reason = "overfitting detected (train decreasing, val increasing)"
-                
-                # 3. Train-val gap becoming too large (overfitting)
-                if len(history['val_losses']) >= 2:
-                    train_val_gap = loss_value - val_loss
-                    if train_val_gap < -0.5:  # Train loss much lower than val
-                        should_stop = True
-                        stop_reason = "overfitting detected (large train-val gap)"
-                
-                if should_stop:
-                    print(f"Early stopping at iteration {iteration}: {stop_reason}")
+                if patience_counter >= EARLY_STOPPING_PATIENCE:
+                    print(f"Early stopping at iteration {iteration}")
                     if best_model_state is not None:
                         model.load_state_dict(best_model_state)
                     break
-                    
-                model.train()
-        
-        # Print progress (only when not doing validation)
-        elif iteration % 500 == 0 or iteration < 10:
-            print(f"Iteration {iteration}: Loss = {loss_value:.4f}, Perplexity = {perplexity:.4f}")
+            
+            model.train()
     
     return history
 
-def evaluate_model_perplexity(model, input_batches, target_batches, device):
-    """FIXED: Better evaluation function"""
-    if len(input_batches) == 0:
-        return float('inf')
-    
-    model.eval()
-    model.to(device)
-    
-    total_loss = 0.0
-    total_batches = 0
-    
-    with torch.no_grad():
-        for input_batch, target_batch in zip(input_batches, target_batches):
-            input_batch = input_batch.to(device)
-            target_batch = target_batch.to(device)
-            
-            loss = model.calculate_loss(input_batch, target_batch)
-            if not torch.isnan(loss):
-                total_loss += loss.item()
-                total_batches += 1
-    
-    if total_batches == 0:
-        return float('inf')
-    
-    avg_loss = total_loss / total_batches
-    perplexity = math.exp(avg_loss)
-    
-    return perplexity
-
-class NGramLanguageModel:
-    """N-gram language model (reused from Task 2)"""
-    
-    def __init__(self, n_order, alpha=1.0):
-        self.n_order = n_order
-        self.alpha = alpha
-        self.vocab_size = 0
-        self.ngram_counts = [Counter() for _ in range(n_order)]
-        self.context_counts = [Counter() for _ in range(n_order)]
-        self.interpolation_weights = np.ones(n_order) / n_order
-
-    def fit(self, token_stream, vocab_size, bos_token='<s>'):
-        self.vocab_size = vocab_size + 1
-        stream = [bos_token] * (self.n_order - 1) + token_stream
-        
-        for i in range(len(stream)):
-            for order in range(1, self.n_order + 1):
-                if i - order + 1 < 0:
-                    continue
-                ngram = tuple(stream[i - order + 1:i + 1])
-                context = ngram[:-1]
-                self.ngram_counts[order - 1][ngram] += 1
-                self.context_counts[order - 1][context] += 1
-
-    def calculate_perplexity(self, token_stream, bos_token='<s>'):
-        stream = [bos_token] * (self.n_order - 1) + token_stream
-        log_prob_sum = 0.0
-        count = 0
-        
-        for i in range(self.n_order - 1, len(stream)):
-            token = stream[i]
-            context = tuple(stream[i - self.n_order + 1:i])
-            prob = self._calculate_interpolated_probability(token, context)
-            log_prob_sum += math.log(prob + 1e-10)
-            count += 1
-        
-        return math.exp(-log_prob_sum / count)
-
-    def _calculate_interpolated_probability(self, token, context):
-        prob = 0.0
-        
-        for order in range(1, self.n_order + 1):
-            if len(context) >= order - 1:
-                ngram_context = context[-(order - 1):]
-                ngram = ngram_context + (token,)
-                
-                count = self.ngram_counts[order - 1][ngram]
-                context_count = self.context_counts[order - 1][ngram_context]
-                
-                if context_count > 0:
-                    prob += self.interpolation_weights[order - 1] * (count + self.alpha) / (context_count + self.alpha * self.vocab_size)
-        
-        return prob
-
-def generate_text_sample(model, tokenizer, token_to_id, id_to_token, context, max_tokens, temperature=1.0, top_k=None):
-    """Generate text sample from model"""
-    context_tokens = tokenizer.encode(context)
-    context_token_ids = [token_to_id.get(token, 0) for token in context_tokens]
-    
-    if isinstance(model, GPTModel):
-        generated_token_ids = model.generate(context_token_ids, max_tokens, temperature, top_k)
-        generated_tokens = [id_to_token.get(token_id, '<UNK>') for token_id in generated_token_ids]
-        generated_text = tokenizer.decode(generated_tokens)
-        return generated_text
-    
-    return context  # Fallback for other models
-
-# Import from utils
-from utils import (
-    load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe
-)
-
 def main():
-    """Main function to run Task 4"""
-    print("Task 4: GPT Implementation with PyTorch - FIXED VERSION")
-    print("=" * 50)
+    """Main function - Pure GPT implementation and training"""
+    print("Task 4: Pure GPT Implementation")
+    print("=" * 60)
+    print("Focus: Implement and train GPT (transformer) models")
+    print("Architecture: Multi-head self-attention + feed-forward layers")
     
     # Set device
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-        print("Using CUDA GPU")
-    else:
-        device = torch.device("cpu")
-        print("Using CPU")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     
-    print(f"Device: {device}")
+    # Set random seeds for reproducibility
+    torch.manual_seed(42)
+    np.random.seed(42)
     
-    # Load and preprocess data
-    print("Loading and preprocessing data...")
+    # Load data
     train_text, valid_text, test_text = load_and_slice_data(PERCENTAGE)
+    results = {}
     
-    # Results storage
-    results = {
-        'bpe_configs': {},
-        'ngram_results': {},
-        'neural_bigram_results': {},
-        'gpt_results': {},
-        'comparison': {}
-    }
-    
-    # Test different BPE configurations
     for merge_count in MERGE_COUNTS:
-        print(f"\nTesting BPE with {merge_count} merges...")
+        print(f"\n{'='*50}")
+        print(f"Training GPT with {merge_count} BPE merges")
+        print(f"{'='*50}")
         
-        # Load cached BPE model
+        # Load BPE tokenizer
         bpe = load_cached_bpe(merge_count, BEST_NORMALIZATION)
         if bpe is None:
-            print(f"BPE model not found in cache for {merge_count} merges. Please run task1.py first.")
+            print(f" BPE model not found for {merge_count} merges. Run task1.py first.")
             continue
         
-        # Tokenize data
+        # Tokenize and convert to IDs
         train_tokens = bpe.encode(train_text)
-        val_tokens = bpe.encode(valid_text)
-        test_tokens = bpe.encode(test_text)
+        valid_tokens = bpe.encode(valid_text)
         
-        # Create token to ID mapping
-        unique_tokens = list(set(train_tokens + val_tokens + test_tokens))
-        token_to_id = {token: i for i, token in enumerate(unique_tokens)}
-        id_to_token = {i: token for i, token in enumerate(unique_tokens)}
+        token_to_id = bpe.token2id
+        id_to_token = bpe.id2token
         
-        # Convert tokens to IDs
-        train_tokens = [token_to_id[token] for token in train_tokens]
-        val_tokens = [token_to_id[token] for token in val_tokens]
-        test_tokens = [token_to_id[token] for token in test_tokens]
+        train_ids = [token_to_id.get(token, 0) for token in train_tokens]
+        valid_ids = [token_to_id.get(token, 0) for token in valid_tokens]
         
-        vocab_size = len(unique_tokens)
-        print(f"Vocabulary size: {vocab_size}")
+        vocab_size = len(bpe.vocab)
+        print(f"Vocabulary size: {vocab_size:,}")
+        print(f"Training tokens: {len(train_ids):,}")
+        print(f"Validation tokens: {len(valid_ids):,}")
         
-        # Store BPE config
-        results['bpe_configs'][merge_count] = {
+        # Test different GPT configurations
+        merge_results = {}
+        
+        for config in GPT_CONFIGS:
+            config_name = config['name']
+            print(f"\n--- Training {config_name} ---")
+            print(f"Architecture: {config['n_layer']} layers, {config['n_embd']} dim, {config['n_head']} heads")
+            
+            # Prepare training data
+            train_batches, train_target_batches = prepare_gpt_data(
+                train_ids, config['chunk_size'], BATCH_SIZE
+            )
+            valid_batches, valid_target_batches = prepare_gpt_data(
+                valid_ids, config['chunk_size'], BATCH_SIZE
+            )
+            
+            if not train_batches:
+                print(f" No training data for {config_name}")
+                continue
+            
+            # Create GPT model
+            gpt_model = GPTModel(
+                vocab_size=vocab_size,
+                n_embd=config['n_embd'],
+                n_head=config['n_head'],
+                n_layer=config['n_layer'],
+                chunk_size=config['chunk_size'],
+                dropout=config['dropout']
+            )
+            
+            # Create optimizer
+            optimizer = optim.AdamW(
+                gpt_model.parameters(),
+                lr=LEARNING_RATE,
+                weight_decay=0.01
+            )
+            
+            # Train model
+            history = train_gpt_model(
+                gpt_model, train_batches, train_target_batches,
+                valid_batches, valid_target_batches, optimizer,
+                MAX_ITERATIONS, device
+            )
+            
+            # Save the trained model
+            model_path = f'gpt_model_{merge_count}_{config_name.lower().replace("-", "_")}.pt'
+            torch.save({
+                'model_state_dict': gpt_model.state_dict(),
+                'config': config,
+                'vocab_size': vocab_size,
+                'token_to_id': token_to_id,
+                'id_to_token': id_to_token,
+                'bpe_merge_count': merge_count
+            }, model_path)
+            
+            # Generate sample text to verify model works
+            context = "to be or not to be"
+            context_tokens = bpe.encode(context)
+            context_ids = [token_to_id.get(token, 0) for token in context_tokens]
+            
+            # Test different generation strategies
+            generation_samples = {}
+            
+            try:
+                # Conservative generation
+                generated_ids = gpt_model.generate(
+                    context_ids, 30, temperature=0.7, top_k=50, top_p=0.9
+                )
+                generated_tokens = [id_to_token.get(id, "<UNK>") for id in generated_ids]
+                generation_samples['conservative'] = bpe.decode(generated_tokens)
+                
+                # Creative generation  
+                generated_ids = gpt_model.generate(
+                    context_ids, 30, temperature=1.0, top_k=100, top_p=0.95
+                )
+                generated_tokens = [id_to_token.get(id, "<UNK>") for id in generated_ids]
+                generation_samples['creative'] = bpe.decode(generated_tokens)
+                
+            except Exception as e:
+                print(f"Generation failed: {e}")
+                generation_samples = {'error': str(e)}
+            
+            # Store results
+            merge_results[config_name] = {
+                'training_history': history,
+                'generation_samples': generation_samples,
+                'config': config,
+                'model_path': model_path,
+                'final_val_loss': history['val_losses'][-1] if history['val_losses'] else float('inf'),
+                'final_val_perplexity': history['val_perplexities'][-1] if history['val_perplexities'] else float('inf')
+            }
+            
+            print(f" {config_name} training completed!")
+            print(f"Final validation perplexity: {merge_results[config_name]['final_val_perplexity']:.2f}")
+            print(f"Model saved to: {model_path}")
+            if 'conservative' in generation_samples:
+                print(f"Sample: {generation_samples['conservative']}")
+        
+        results[merge_count] = {
             'vocab_size': vocab_size,
-            'merge_count': merge_count,
-            'normalization': BEST_NORMALIZATION,
-            'token_to_id': token_to_id,
-            'id_to_token': id_to_token
+            'gpt_results': merge_results
         }
-        
-        # 1. Test n-gram models
-        print("Testing n-gram models...")
-        ngram_results = {}
-        for n in [1, 2, 3, 4]:
-            ngram_model = NGramLanguageModel(n)
-            ngram_model.fit(train_tokens, vocab_size)
-            
-            val_perplexity = ngram_model.calculate_perplexity(val_tokens)
-            test_perplexity = ngram_model.calculate_perplexity(test_tokens)
-            
-            ngram_results[f'n={n}'] = {
-                'val_perplexity': val_perplexity,
-                'test_perplexity': test_perplexity
-            }
-            
-            print(f"  n={n}: Val Perplexity = {val_perplexity:.4f}, Test Perplexity = {test_perplexity:.4f}")
-        
-        results['ngram_results'][merge_count] = ngram_results
-        
-        # 2. Test neural bigram models with different embedding sizes
-        print("Testing neural bigram models...")
-        neural_results = {}
-        
-        for embedding_dim in EMBEDDING_DIMS:
-            print(f"  Testing with embedding_dim = {embedding_dim}")
-            
-            # Prepare data for bigram training
-            train_prev_batches, train_next_batches = prepare_data_for_bigram_training(
-                train_tokens, BATCH_SIZE
-            )
-            val_prev_batches, val_next_batches = prepare_data_for_bigram_training(
-                val_tokens, BATCH_SIZE
-            )
-            
-            # Create model
-            model = NeuralBigramModel(vocab_size, embedding_dim)
-            optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-            
-            # Train model with validation for early stopping
-            history = train_neural_model(
-                model, train_prev_batches, train_next_batches, optimizer, 
-                MAX_ITERATIONS, device, validation_batches=list(zip(val_prev_batches, val_next_batches))
-            )
-            
-            # Evaluate on validation data
-            val_perplexity = evaluate_model_perplexity(model, val_prev_batches, val_next_batches, device)
-            
-            neural_results[f'emb_dim={embedding_dim}'] = {
-                'val_perplexity': val_perplexity,
-                'training_history': history
-            }
-            
-            print(f"    Val Perplexity = {val_perplexity:.4f}")
-        
-        results['neural_bigram_results'][merge_count] = neural_results
-        
-        # 3. Test GPT model
-        print("Testing GPT model...")
-        
-        # Prepare data for GPT training
-        train_input_batches, train_target_batches = prepare_data_for_gpt_training(
-            train_tokens, GPT_CONFIG['chunk_size'], BATCH_SIZE
-        )
-        val_input_batches, val_target_batches = prepare_data_for_gpt_training(
-            val_tokens, GPT_CONFIG['chunk_size'], BATCH_SIZE
-        )
-        
-        # Create GPT model
-        gpt_model = GPTModel(
-            vocab_size=vocab_size,
-            n_embd=GPT_CONFIG['n_embd'],
-            n_head=GPT_CONFIG['n_head'],
-            n_layer=GPT_CONFIG['n_layer'],
-            chunk_size=GPT_CONFIG['chunk_size'],
-            dropout=GPT_CONFIG['dropout']
-        )
-        
-        # Create optimizer with weight decay
-        optimizer = optim.AdamW(
-            gpt_model.parameters(), 
-            lr=LEARNING_RATE, 
-            weight_decay=GPT_CONFIG['weight_decay']
-        )
-        
-        # Train GPT model with validation for early stopping
-        history = train_neural_model(
-            gpt_model, train_input_batches, train_target_batches, optimizer,
-            MAX_ITERATIONS, device, validation_batches=list(zip(val_input_batches, val_target_batches))
-        )
-        
-        # Evaluate GPT model on validation data
-        val_perplexity = evaluate_model_perplexity(gpt_model, val_input_batches, val_target_batches, device)
-        
-        # Generate sample text
-        sample_text = generate_text_sample(
-            gpt_model, bpe, token_to_id, id_to_token, GENERATION_CONTEXT, GENERATION_MAX_TOKENS, 
-            TEMPERATURE, TOP_K
-        )
-        
-        results['gpt_results'][merge_count] = {
-            'val_perplexity': val_perplexity,
-            'training_history': history,
-            'sample_text': sample_text,
-            'config': GPT_CONFIG
-        }
-        
-        print(f"  GPT Val Perplexity = {val_perplexity:.4f}")
-        print(f"  Sample text: {sample_text[:100]}...")
     
-    # Compare models across all configurations
-    print("\nComparing all models...")
-    comparison = {}
+    # Save complete results
+    save_results(results, 'task4_gpt_results.pkl')
     
+    # Print final summary
+    print(f"\n{'='*60}")
+    print(" GPT TRAINING COMPLETED!")
+    print(f"{'='*60}")
+    
+    print("Models trained:")
     for merge_count in MERGE_COUNTS:
-        if merge_count in results['ngram_results']:
-            comparison[merge_count] = {
-                'best_ngram': min(results['ngram_results'][merge_count].values(), 
-                                 key=lambda x: x['val_perplexity']),
-                'best_neural': min(results['neural_bigram_results'][merge_count].values(), 
-                                  key=lambda x: x['val_perplexity']),
-                'gpt': results['gpt_results'][merge_count]
-            }
-    
-    results['comparison'] = comparison
-    
-    # Print final comparison
-    print("\nFinal Comparison:")
-    print("-" * 80)
-    print(f"{'BPE Merges':<12} {'Best N-gram':<15} {'Best Neural':<15} {'GPT':<15}")
-    print("-" * 80)
-    
-    for merge_count in MERGE_COUNTS:
-        if merge_count in comparison:
-            best_ngram = comparison[merge_count]['best_ngram']['val_perplexity']
-            best_neural = comparison[merge_count]['best_neural']['val_perplexity']
-            gpt_perplexity = comparison[merge_count]['gpt']['val_perplexity']
+        if merge_count in results:
+            print(f"\n BPE Merges: {merge_count}")
+            gpt_results = results[merge_count]['gpt_results']
             
-            print(f"{merge_count:<12} {best_ngram:<15.4f} {best_neural:<15.4f} {gpt_perplexity:<15.4f}")
+            for config_name, config_result in gpt_results.items():
+                val_perplexity = config_result.get('final_val_perplexity', float('inf'))
+                model_path = config_result.get('model_path', 'N/A')
+                print(f"  {config_name:12}: PPL = {val_perplexity:7.2f} | {model_path}")
     
-    # Save results
-    save_results(results, 'task4_results.pkl')
-    
-    # Print sample generated text
-    print("\nSample Generated Text:")
-    print("=" * 50)
-    if results['gpt_results']:
-        best_merge_count = min(results['gpt_results'].keys(), 
-                              key=lambda x: results['gpt_results'][x]['val_perplexity'])
-        sample_text = results['gpt_results'][best_merge_count]['sample_text']
-        print(sample_text)
-    
-    print("\nTask 4 completed!")
+    print(f"\n🔧 How to use your trained GPT models:")
+    print(f"python generate_text.py --model task4_gpt_2000 --context 'to be or not to be'")
+    print(f"\n💡 GPT models use transformer architecture with:")
+    print(f"- Multi-head self-attention (looks at ALL previous tokens)")
+    print(f"- Multiple transformer layers for complex pattern learning")
+    print(f"- Position embeddings for sequence understanding")
+    print(f"- Advanced generation with top-k and top-p sampling")
 
 if __name__ == "__main__":
     main()
