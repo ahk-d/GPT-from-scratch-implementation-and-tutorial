@@ -1,0 +1,12 @@
+gpt_flatten_1000merges.pt filter=lfs diff=lfs merge=lfs -text
+gpt_flatten_2000merges.pt filter=lfs diff=lfs merge=lfs -text
+gpt_flatten_3000merges.pt filter=lfs diff=lfs merge=lfs -text
+gpt_minimal_2000merges.pt filter=lfs diff=lfs merge=lfs -text
+neural_4gram_flatten_1000merges.pt filter=lfs diff=lfs merge=lfs -text
+neural_4gram_flatten_2000merges.pt filter=lfs diff=lfs merge=lfs -text
+neural_4gram_flatten_3000merges.pt filter=lfs diff=lfs merge=lfs -text
+neural_4gram_minimal_2000merges.pt filter=lfs diff=lfs merge=lfs -text
+ngram_backoff_max4_alpha0.4_flatten_1000merges.pkl filter=lfs diff=lfs merge=lfs -text
+ngram_backoff_max4_alpha0.4_flatten_2000merges.pkl filter=lfs diff=lfs merge=lfs -text
+ngram_backoff_max4_alpha0.4_flatten_3000merges.pkl filter=lfs diff=lfs merge=lfs -text
+ngram_backoff_max4_alpha0.4_minimal_2000merges.pkl filter=lfs diff=lfs merge=lfs -text
