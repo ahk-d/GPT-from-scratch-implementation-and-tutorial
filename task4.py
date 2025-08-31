@@ -17,11 +17,10 @@ import sys
 import os
 import math
 from pathlib import Path
-import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Configuration - IMPROVED
-PERCENTAGE = 0.50
+PERCENTAGE = 0.1
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]
 EMBEDDING_DIMS = [64, 128, 256]
@@ -519,7 +518,7 @@ def generate_text_sample(model, tokenizer, token_to_id, id_to_token, context, ma
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe, plot_training_curves, create_comprehensive_report
+    load_cached_bpe
 )
 
 def main():
@@ -634,13 +633,6 @@ def main():
             # Evaluate on validation data
             val_perplexity = evaluate_model_perplexity(model, val_prev_batches, val_next_batches, device)
             
-            # Plot training curves for this configuration
-            plot_training_curves(
-                history, 
-                f'Neural Bigram (BPE merges={merge_count}, emb_dim={embedding_dim})', 
-                None  # Display only, don't save
-            )
-            
             neural_results[f'emb_dim={embedding_dim}'] = {
                 'val_perplexity': val_perplexity,
                 'training_history': history
@@ -702,13 +694,6 @@ def main():
         
         print(f"  GPT Val Perplexity = {val_perplexity:.4f}")
         print(f"  Sample text: {sample_text[:100]}...")
-        
-        # Plot training curves for GPT model
-        plot_training_curves(
-            history, 
-            f'GPT Training (BPE merges={merge_count})', 
-            None  # Display only, don't save
-        )
     
     # Compare models across all configurations
     print("\nComparing all models...")
@@ -742,9 +727,6 @@ def main():
     
     # Save results
     save_results(results, 'task4_results.pkl')
-    
-    # Create comprehensive report
-    create_comprehensive_report(results, "Task 4")
     
     # Print sample generated text
     print("\nSample Generated Text:")

@@ -287,9 +287,8 @@ class BPE:
                             j += 1
                     pieces = merged
                 out.extend(pieces)
-                # Add space token between words (except for last word)
-                if i < len(words) - 1:
-                    out.append(' ')
+                # Add end-of-word symbol after each word
+                out.append(self.end_of_word)
             return out
 
         def decode(self, tokens):
@@ -300,7 +299,9 @@ class BPE:
             Returns:
                 str: Reconstructed text
             """
+            # Join tokens and replace end-of-word symbols with spaces
             s = "".join(tokens)
+            s = s.replace(self.end_of_word, ' ')
             return re.sub(r"\s+", " ", s).strip()
 
         def evaluate_tpw(self, text, norm='lower_nopunct'):
@@ -317,8 +318,8 @@ class BPE:
             if not words:
                 return 0.0, True, 0
             toks = self.encode(text, norm)  # encode() handles normalization internally
-            # Count only non-space tokens for tokens per word calculation
-            word_tokens = [t for t in toks if t != ' ']
+            # Count only non-end-of-word tokens for tokens per word calculation
+            word_tokens = [t for t in toks if t != self.end_of_word]
             avg_tpw = len(word_tokens) / len(words)
             recon_ok = (self.decode(toks) == s)
             return float(avg_tpw), bool(recon_ok), len(words)
@@ -401,7 +402,7 @@ def create_result_entry(normalization_technique, merge_count, bpe_model, evaluat
 
 def plot_training_curves(history, title, save_path=None):
         """
-        What it does: Plots training curves (loss and perplexity)
+        What it does: Plots simple training curves (loss and perplexity)
         Args:
             history (dict): Training history with 'losses' and 'perplexities'
             title (str): Plot title
@@ -409,25 +410,30 @@ def plot_training_curves(history, title, save_path=None):
         Returns:
             None
         """
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        # Create single plot with two y-axes
+        fig, ax1 = plt.subplots(figsize=(10, 6))
         
-        # Plot loss
-        ax1.plot(history['losses'], 'b-', linewidth=2, alpha=0.8)
-        ax1.set_title(f'{title} - Training Loss', fontsize=14, fontweight='bold')
+        # Plot loss on primary y-axis
+        color1 = '#1f77b4'
         ax1.set_xlabel('Iteration', fontsize=12)
-        ax1.set_ylabel('Loss', fontsize=12)
+        ax1.set_ylabel('Loss', color=color1, fontsize=12)
+        line1 = ax1.plot(history['losses'], color=color1, linewidth=2, label='Loss')
+        ax1.tick_params(axis='y', labelcolor=color1)
         ax1.grid(True, alpha=0.3)
-        ax1.set_yscale('log')
         
-        # Plot perplexity
-        ax2.plot(history['perplexities'], 'r-', linewidth=2, alpha=0.8)
-        ax2.set_title(f'{title} - Training Perplexity', fontsize=14, fontweight='bold')
-        ax2.set_xlabel('Iteration', fontsize=12)
-        ax2.set_ylabel('Perplexity', fontsize=12)
-        ax2.grid(True, alpha=0.3)
-        ax2.set_yscale('log')
+        # Plot perplexity on secondary y-axis
+        ax2 = ax1.twinx()
+        color2 = '#ff7f0e'
+        ax2.set_ylabel('Perplexity', color=color2, fontsize=12)
+        line2 = ax2.plot(history['perplexities'], color=color2, linewidth=2, label='Perplexity')
+        ax2.tick_params(axis='y', labelcolor=color2)
         
-        plt.suptitle(title, fontsize=16, fontweight='bold')
+        # Add legend
+        lines = line1 + line2
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc='upper right')
+        
+        plt.title(title, fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         # Always display the plot

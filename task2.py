@@ -15,11 +15,11 @@ import os
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe, create_comprehensive_report
+    load_cached_bpe
 )
 
 # Configuration
-PERCENTAGE = 0.50                       # 0.01=1%, 0.05=5%, 1.0=full - Using 50% for larger dataset
+PERCENTAGE = 0.1                        # 0.01=1%, 0.1=10%, 1.0=full - Using 10% for better results
 BEST_NORMALIZATION = "lower_nopunct"  # Best from Task 1 results (lower_nopunct with 2000 merges)
 TOP_MERGE_COUNTS = [1000, 2000]  # Only 1000 and 2000 merge counts
 N_GRAM_ORDERS = [1, 2, 3, 4]      # n-gram orders to evaluate
@@ -261,8 +261,13 @@ def main():
             ngram_results[f'n={n}'] = {
                 'val_perplexity': val_perplexity,
                 'test_perplexity': test_perplexity,
-                'interpolation_weights': ngram_model.interpolation_weights.tolist()
+                'interpolation_weights': ngram_model.interpolation_weights.tolist(),
+                'model_path': f'ngram_model_{merge_count}_{n}.pkl'  # Save model path
             }
+            
+            # Save the trained n-gram model
+            with open(f'ngram_model_{merge_count}_{n}.pkl', 'wb') as f:
+                pickle.dump(ngram_model, f)
             
             print(f"    Val Perplexity = {val_perplexity:.4f}, Test={test_perplexity:.4f}")
         
@@ -274,9 +279,6 @@ def main():
     
     # Save results
     save_results(results, 'task2_results.pkl')
-    
-    # Create comprehensive report
-    create_comprehensive_report(results, "Task 2")
     
     # Print summary
     print("\nSummary:")

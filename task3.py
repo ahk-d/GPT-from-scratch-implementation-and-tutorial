@@ -14,16 +14,15 @@ from collections import Counter
 import sys
 import os
 from pathlib import Path
-import matplotlib.pyplot as plt
 
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe, plot_training_curves, create_comprehensive_report
+    load_cached_bpe
 )
 
 # FIXED Configuration
-PERCENTAGE = 0.50
+PERCENTAGE = 0.1
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]
 
@@ -292,8 +291,12 @@ def main():
                             'learning_rate': lr,
                             'weight_decay': weight_decay,
                             'val_perplexity': val_perplexity,
-                            'training_history': history
+                            'training_history': history,
+                            'checkpoint_path': f'neural_bigram_{merge_count}_{config_key}.pt'  # Save checkpoint path
                         }
+                        
+                        # Save the trained model checkpoint
+                        torch.save(model.state_dict(), f'neural_bigram_{merge_count}_{config_key}.pt')
                         
                         # Update best configuration
                         if val_perplexity < best_val_perplexity:
@@ -339,12 +342,10 @@ def main():
             # Update results with test perplexity
             hyperparameter_results[best_config]['test_perplexity'] = test_perplexity
             hyperparameter_results[best_config]['final_training_history'] = final_history
+            hyperparameter_results[best_config]['final_checkpoint_path'] = f'neural_bigram_{merge_count}_{best_config}_final.pt'
             
-            # Plot training curves
-            plot_training_curves(
-                final_history,
-                f'Neural Bigram - BPE {merge_count} merges - {best_config}'
-            )
+            # Save the final best model
+            torch.save(model.state_dict(), f'neural_bigram_{merge_count}_{best_config}_final.pt')
         
         # Store results for this merge count
         results[merge_count] = {
@@ -356,7 +357,6 @@ def main():
     
     # Save and report results
     save_results(results, 'task3_fixed_results.pkl')
-    create_comprehensive_report(results, "Task 3")
     
     # Summary
     print(f"\n{'='*70}")
