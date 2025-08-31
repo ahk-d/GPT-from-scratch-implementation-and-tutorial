@@ -18,7 +18,7 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.01
+PERCENTAGE = 1
 BEST_NORMALIZATION = "lower_nopunct"  
 MERGE_COUNTS = [1000, 2000]
 BATCH_SIZE = 32

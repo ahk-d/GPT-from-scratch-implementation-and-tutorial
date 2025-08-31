@@ -20,7 +20,7 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.10                       # 0.01=1%, 0.1=10%, 1.0=full - Using 10% for better results
+PERCENTAGE = 1                       # 0.01=1%, 0.1=10%, 1.0=full - Using 10% for better results
 BEST_NORMALIZATION = "lower_nopunct"  # Best from Task 1 results (lower_nopunct with 2000 merges)
 TOP_MERGE_COUNTS = [1000, 2000]  # Only 1000 and 2000 merge counts
 N_GRAM_ORDERS = [1, 2, 3, 4]      # n-gram orders to evaluate
