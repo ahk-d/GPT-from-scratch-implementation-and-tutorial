@@ -20,7 +20,7 @@ from pathlib import Path
 import seaborn as sns
 
 # Configuration - IMPROVED
-PERCENTAGE = 0.1
+PERCENTAGE = 0.01
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]
 EMBEDDING_DIMS = [64, 128, 256]

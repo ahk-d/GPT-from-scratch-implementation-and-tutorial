@@ -384,7 +384,235 @@ def calculate_perplexity(model, token_stream, bos_token='<s>'):
     perplexity = np.exp(-avg_log_prob)
     
     return perplexity
-\`\`\``);
+\`\`\`
+
+## 9. Comprehensive Results Report
+
+> **Note:** This document is intended to be viewed as plain text (kept inside a code fence). All numbers below are taken directly from your run logs.
+
+---
+
+### 0) Executive Summary
+
+- **Tokenization (Task 1):** Increasing BPE merges from **1,000 → 2,000** reduces average tokens/word (higher compression) with perfect text reconstruction. Best compression on validation set at **2,000 merges (1.3129 tokens/word)**.
+- **Classical n-grams (Task 2):** With limited data and sparse higher-order counts, **unigram** outperformed higher n for both 1,000 and 2,000 merges. Best perplexity at **BPE=2,000: Val/Test≈79.50**.
+- **Neural bigram (Task 3 — FIXED):** Strong gains over n-grams. Best overall at **BPE=1,000**, **emb_dim=128**, **wd=1e-5** with **Val≈29.92, Test≈28.53**. BPE=2,000 lags (Val≈38.47, Test≈33.66).
+- **GPT (Task 4 — FIXED):** Clear winner. At **BPE=1,000**, **Val≈22.08** (vs. neural bigram 38.91, n-gram 72.01). At **BPE=2,000**, **Val≈28.80**. GPT improves **~43%** over neural bigram and **~69%** over best n-gram on BPE=1,000.
+
+**Big picture:** Token compression (more merges) helps sequence length, but with current data/model, **BPE=1,000** consistently yields **lower perplexity** for neural & GPT models. Capacity and contextual modeling (GPT) dominate simpler models.
+
+---
+
+### 1) Task 1 — BPE Tokenization
+
+**Setup**
+
+- Data slice: **50%** of each split  
+  \`train=432,212 chars | valid=25,961 | test=26,024\`
+- BPE training vocabulary size driver: **merge_count ∈ {1,000, 2,000}**  
+- Normalization: **lower_nopunct**, **aggressive**
+- Reconstruction: **True** across splits
+
+**Results**
+
+| Config                                  | Final Vocab | Avg Tokens/Word (Train / Valid / Test) | Reconstruct OK |
+|-----------------------------------------|-------------|-----------------------------------------|----------------|
+| 1,000 merges • lower_nopunct            | 992         | 1.3995 / **1.4755** / 1.4188            | ✓              |
+| 2,000 merges • lower_nopunct            | 1,927       | 1.2260 / **1.3129** / 1.2644            | ✓              |
+| 1,000 merges • aggressive               | 992         | 1.3995 / **1.4755** / 1.4188            | ✓              |
+| 2,000 merges • aggressive               | 1,927       | 1.2260 / **1.3129** / 1.2644            | ✓              |
+
+**Finding:** Best compression on validation set is **2,000 merges (1.3129 tokens/word)**. However, downstream language modeling (Tasks 2–4) shows **BPE=1,000** achieves **lower perplexity** (better predictive performance), suggesting a trade-off: higher compression vs. model/data regime suitability.
+
+---
+
+### 2) Task 2 — N-gram Language Modeling
+
+**Setup**
+
+- Same 50% data split as Task 1  
+- Tokenization: **BPE=1,000** (vocab=992) and **BPE=2,000** (vocab=1,927)  
+- Models: interpolated **n ∈ {1,2,3,4}** (grid-searched weights shown by "Best interpolation weights" entries)
+
+**Results (Validation/Test Perplexity)**
+
+**BPE=1,000**
+- **n=1:** **219.48 / 219.48**
+- n=2: 219.48 / 219.48
+- n=3: 321.86 / 322.78
+- n=4: 448.41 / 449.96
+
+**BPE=2,000**
+- **n=1:** **79.50 / 79.50**
+- n=2: 79.50 / 79.50
+- n=3: 121.28 / 120.70
+- n=4: 204.40 / 204.07
+
+**Observations & Interpretation**
+
+- **Unigram wins** in both tokenization regimes; higher n perform worse due to **sparsity** of higher-order counts with limited data and large vocabularies.  
+- **BPE=2,000** produces **much better unigram perplexity** (≈79.5 vs. 219.5) because tokens are longer (closer to words), making unigram distributions more informative.
+- Despite this, **n-grams are far outperformed** by neural models (Task 3) and GPT (Task 4) once context modeling is learned.
+
+---
+
+### 3) Task 3 — Neural Bigram Language Modeling (FIXED)
+
+**Setup**
+
+- Device: CPU (per log)  
+- Tokenization: **BPE=1,000** (vocab=993) and **BPE=2,000** (vocab=1,929)  
+- Data tokens:  
+  - **BPE=1,000:** train 193,904 | valid 12,062 | test 11,827  
+  - **BPE=2,000:** train 179,881 | valid 11,270 | test 11,072  
+- Batch size: 32 | LR: 1e-3 | Weight decay ∈ {1e-5, 1e-4} | Embedding dim ∈ {64, 128}  
+- Early stopping applied in some runs
+
+**Best Configurations & Scores**
+
+| BPE | Emb Dim | Weight Decay | **Val PPL** | **Test PPL** |
+|-----|---------|--------------|-------------|--------------|
+| 1,000 | 128 | **1e-5** | **29.9164** | **28.5338** |
+| 2,000 | 128 | **1e-4** | **38.4748** | **33.6593** |
+
+**Notes**
+
+- At **BPE=1,000**, the model converges steadily from ≈991 Val PPL to ~30.  
+- At **BPE=2,000**, best Val ≈38.47 with heavier regularization (1e-4), still notably worse than BPE=1,000.
+- Relative to Task 2 n-grams, neural bigram reduces perplexity **drastically** (e.g., at BPE=1,000: from 219.5 → 29.9 Val PPL).
+
+**Conclusion:** Learned nonlinear representation of bigram dynamics greatly outperforms count-based models, and **BPE=1,000** is the better operating point in this regime.
+
+---
+
+### 4) Task 4 — GPT Implementation with PyTorch (FIXED)
+
+**Setup**
+
+- **GPU:** CUDA (Device: \`cuda\`)  
+- Data slice: **50%** of each split (chars per split as above)  
+- Tokenization regimes compared: **BPE=1,000** (vocab=993) vs. **BPE=2,000** (vocab=1,929)  
+- Baselines re-run for comparison: **n-grams** and **neural bigram**  
+- GPT training: ~**3,000 iterations**; batch counts reported as:  
+  - **BPE=1,000:** **189 batches**  
+  - **BPE=2,000:** **176 batches**
+
+> **Important:** Logs only report **validation perplexity** for GPT in Task 4; test perplexity is not printed here (unlike Task 3). Comparisons below use **validation** PPL consistently.
+
+**Results — BPE=1,000**
+
+- **N-gram (best Val):** **72.0088** (Test 69.9510)  
+- **Neural bigram (best Val):** **38.9074**  
+- **GPT (Val):** **22.0831**
+
+**Results — BPE=2,000**
+
+- **N-gram (best Val):** **73.9242** (Test 70.3295)  
+- **Neural bigram (best Val):** **39.6324**  
+- **GPT (Val):** **28.7979**
+
+**Relative Improvements (Validation PPL)**
+
+- **GPT vs Neural Bigram (BPE=1,000):** 38.91 → 22.08 (**~43%** lower)  
+- **GPT vs Best N-gram (BPE=1,000):** 72.01 → 22.08 (**~69%** lower)  
+- **BPE sensitivity (GPT):** 28.80 → **22.08** (**~23%** lower PPL for 1,000 vs 2,000 merges)
+
+**Training Dynamics (GPT)**
+
+- Rapid loss/PPL decrease in the first few hundred iterations, then slower improvements—typical of transformer pretraining.  
+- Sample generation (BPE=1,000) is coherent at the phrase level:  
+  > *"to be or not to say thee yet if you to me speak of …"*  
+- **Warnings:** Two harmless Matplotlib legend warnings (no labeled artists).
+
+**Interpretation**
+
+- **GPT decisively outperforms** simpler models by modeling **longer context** and leveraging **self-attention**.  
+- **BPE=1,000** again outperforms **BPE=2,000** for GPT. Intuition: with this dataset size and model budget, a **smaller vocabulary** (shorter tokens, longer sequences) improves learning of subword regularities and reduces softmax sparsity.
+
+**Final Comparison Table (Validation PPL)**
+
+| BPE Merges | Best N-gram | Best Neural Bigram | **GPT** |
+|------------|-------------|--------------------|---------|
+| **1,000**  | 72.0088     | 38.9074            | **22.0831** |
+| **2,000**  | 73.9242     | 39.6324            | **28.7979** |
+
+---
+
+### 5) Cross-Task Takeaways
+
+1. **Compression vs. Predictive Performance:**  
+   - **Task 1** shows better compression at **2,000 merges** (fewer tokens/word).  
+   - **Tasks 3–4** show **lower perplexity at 1,000 merges**—the better choice for this modeling setup.
+2. **Model Class Matters (a lot):**  
+   - **n-grams** struggle due to sparsity; **neural bigram** makes large gains; **GPT** wins by modeling deeper context and subword structure.
+3. **Regularization & Capacity:**  
+   - The **best neural bigram** at BPE=2,000 needed stronger weight decay—signaling sensitivity to vocab size and sparsity.  
+   - GPT's gains suggest capacity is being effectively used; still room for schedule/regularization tweaks.
+4. **Validation vs. Test:**  
+   - **Task 3** reports both Val and Test PPL (great!).  
+   - **Task 4** currently reports **Val PPL only for GPT**; adding **Test PPL** will complete the picture.
+
+---
+
+### 6) Practical Recommendations
+
+- **For reporting completeness (Task 4):** compute **GPT Test Perplexity** alongside Val PPL for both BPE merges.
+- **Training polish (likely low-effort wins):**
+  - **Cosine LR decay** + **warmup**;  
+  - **Gradient clipping (e.g., 1.0)** to stabilize later iterations;  
+  - **Val-best checkpointing** to avoid late-iteration regressions.
+- **Data efficiency:** try **sliding/overlapping context windows** (stride < context) to increase distinct training examples per epoch.
+- **Ablations to try next:**
+  - Vary **context length**, **layers/heads**, and **embed size**;  
+  - **Label smoothing** or **weight tying** (if not already);  
+  - Explore **dropout** schedules (attention/ffn/emb).
+- **BPE choice:** keep **1,000 merges** for now (best perplexity), but revisit if scaling model/data up.
+
+---
+
+### 7) Reproducibility & Artifacts
+
+- **Seeds:** Fixed (good practice). Consider logging seeds into result dicts and saved artifacts.
+- **Artifacts produced:**  
+  - \`task1_results.pkl\` — BPE stats  
+  - \`task2_results.pkl\` — n-gram perplexities & plots  
+  - \`task3_fixed_results.pkl\` — neural bigram metrics & plots  
+  - \`task4_results.pkl\` — consolidated comparison & plots
+- **Plot warnings:**  
+  - \`utils.py:541\` & \`utils.py:592\`: "No artists with labels found to put in legend."  
+    → Either assign \`label=\` to lines or remove \`ax.legend()\` when unnecessary.
+
+---
+
+### 8) Answers to Task 4 (Direct)
+
+- **Environment:** CUDA GPU (\`cuda\`), 50% data slice (train 432,212 | valid 25,961 | test 26,024 chars).
+- **Tokenization:** BPE=1,000 (vocab=993) and BPE=2,000 (vocab=1,929).
+- **Per-regime results (Validation PPL):**  
+  - **BPE=1,000:**  
+    - N-gram best: **72.0088**  
+    - Neural bigram best: **38.9074**  
+    - **GPT:** **22.0831** (sample text coherent)  
+  - **BPE=2,000:**  
+    - N-gram best: **73.9242**  
+    - Neural bigram best: **39.6324**  
+    - **GPT:** **28.7979**
+- **Conclusion:** **GPT@BPE=1,000** is the best configuration observed (lowest Val PPL). It outperforms neural bigram by ~**43%** and n-gram by ~**69%** on validation. **Recommendation:** report **GPT Test PPL** and adopt training polish (scheduler, clipping, best-checkpointing) for further gains.
+
+---
+
+### 9) Appendix — Selected Raw Log Highlights (for traceability)
+
+- **GPT@BPE=1,000:**  
+  - Training batches: 189; Iter 1500 Val PPL≈16.85 (loss snapshot)  
+  - Final reported **Val PPL=22.0831**; sample: "to be or not to say thee yet if you to me speak of…"
+- **GPT@BPE=2,000:**  
+  - Training batches: 176; **Val PPL=28.7979**; sample Hamlet-style snippet
+- **Neural Bigram (Task 3 — FIXED):**  
+  - **BPE=1,000:** Best **Val≈29.9164**, **Test≈28.5338** (emb=128, wd=1e-5)  
+  - **BPE=2,000:** Best **Val≈38.4748**, **Test≈33.6593** (emb=128, wd=1e-4)
+
+---`);
 
   return (
     <div className="min-h-screen bg-white">

@@ -182,9 +182,8 @@ def generate_ngram_ids(ngram_model, id_to_token, token_to_id, context_ids, max_t
         next_id = int(np.random.choice(vocab_size, p=probs))
         generated.append(next_id)
         
-        # Add end-of-word token after each word token (except end-of-word tokens themselves)
-        if eow_id is not None and next_id != eow_id and len(generated) > 0 and generated[-2] != eow_id:
-            generated.append(eow_id)
+        # Don't add end-of-word token here - it should be handled by the model itself
+        # The BPE encoder already adds end-of-word tokens after each word
         
         if eos_id is not None and next_id == eos_id:
             break

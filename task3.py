@@ -22,7 +22,7 @@ from utils import (
 )
 
 # FIXED Configuration
-PERCENTAGE = 0.1
+PERCENTAGE = 0.01
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]
 
