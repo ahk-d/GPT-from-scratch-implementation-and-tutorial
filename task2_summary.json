@@ -1,0 +1,52 @@
+{
+  "task": "classical_ngram_language_models",
+  "dataset": "shakespeare_clean_bpe2500",
+  "results": {
+    "1": {
+      "methods": {
+        "addk": 1221.0971138658674,
+        "interpolation": 1221.0971138658674,
+        "backoff": 1221.0971138658674
+      }
+    },
+    "2": {
+      "methods": {
+        "addk": 1051.262437197453,
+        "interpolation": 915.9552364877947,
+        "backoff": 904.1304656967556
+      }
+    },
+    "3": {
+      "methods": {
+        "addk": 1974.7287818526079,
+        "interpolation": 1153.1297280567405,
+        "backoff": 1008.8798881307541
+      }
+    },
+    "4": {
+      "methods": {
+        "addk": 2218.798728688931,
+        "interpolation": 1375.934011986428,
+        "backoff": 1025.52095367696
+      }
+    }
+  },
+  "best_overall": [
+    2,
+    {
+      "methods": {
+        "addk": 1051.262437197453,
+        "interpolation": 915.9552364877947,
+        "backoff": 904.1304656967556
+      }
+    }
+  ],
+  "timestamp": 1758358445.9008677,
+  "config": {
+    "smoothing": "add_one_laplace",
+    "k": 1.0,
+    "bpe_merges": 2500,
+    "normalization": "lower_nopunct",
+    "sentence_aware": true
+  }
+}
