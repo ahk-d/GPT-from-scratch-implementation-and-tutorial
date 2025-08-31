@@ -79,7 +79,7 @@ def import_models():
     
     return NGramLanguageModel, NeuralBigramModel, GPTModel
 
-def load_ngram_model(merge_count):
+def load_ngram_model(merge_count, n_order=None):
     """Load N-gram model from saved data"""
     try:
         NGramLanguageModel, _, _ = import_models()
@@ -96,15 +96,25 @@ def load_ngram_model(merge_count):
         
         print(f"Found {len(model_files)} n-gram model files")
         
-        # Load the first available model
-        model_file = model_files[0]
-        n_value = int(model_file.split('_')[-1].replace('.pkl', ''))
+        # Find the specific n-gram order if requested
+        if n_order is not None:
+            target_file = f"task2_{merge_count}_{n_order}.pkl"
+            if target_file in model_files:
+                model_file = target_file
+                n_value = n_order
+            else:
+                print(f"Requested n-gram order {n_order} not found. Available orders: {[int(f.split('_')[-1].replace('.pkl', '')) for f in model_files]}")
+                return None, None, None
+        else:
+            # Load the first available model
+            model_file = model_files[0]
+            n_value = int(model_file.split('_')[-1].replace('.pkl', ''))
+            print(f"Loading first available model (n={n_value})")
         
         print(f"Loading: {model_file} (n={n_value})")
         
         # Create new model and load data
-        vocab_size = 1000 if merge_count == 1000 else 2000
-        model = NGramLanguageModel(vocab_size, n_value)
+        model = NGramLanguageModel(n_value, 1.0)  # n_order, alpha
         
         with open(model_file, 'rb') as f:
             data = pickle.load(f)
@@ -343,11 +353,11 @@ def main():
     # Parse model specification
     parts = args.model.split('_')
     if len(parts) < 3:
-        print("ERROR: Invalid model format. Expected: taskN_modeltype_mergecount")
+        print("ERROR: Invalid model format. Expected: taskN_mergecount_ngramorder")
         return
     
     task_num = int(parts[0].replace('task', ''))
-    merge_count = int(parts[-1])
+    merge_count = int(parts[1])  # The merge count is the second part, not the last
     
     print(f"Generating with {args.model}")
     print(f"Context: '{args.context}'")
@@ -364,7 +374,9 @@ def main():
     
     try:
         if task_num == 2:
-            model, config, perplexity = load_ngram_model(merge_count)
+            # Extract n-gram order from model name (last part after underscore)
+            n_order = int(parts[-1]) if len(parts) >= 3 else None
+            model, config, perplexity = load_ngram_model(merge_count, n_order)
             if model:
                 generated = generate_text_ngram(model, bpe, args.context, args.max_tokens, args.temperature)
                 print(f"Generated: {generated}")

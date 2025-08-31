@@ -20,7 +20,7 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.01                       # 0.01=1%, 0.1=10%, 1.0=full - Using 1% for faster testing
+PERCENTAGE = 0.10                       # 0.01=1%, 0.1=10%, 1.0=full - Using 10% for better results
 BEST_NORMALIZATION = "lower_nopunct"  # Best from Task 1 results (lower_nopunct with 2000 merges)
 TOP_MERGE_COUNTS = [1000, 2000]  # Only 1000 and 2000 merge counts
 N_GRAM_ORDERS = [1, 2, 3, 4]      # n-gram orders to evaluate
@@ -72,15 +72,7 @@ class NGramLanguageModel:
         token_freq = Counter(token_stream)
         rare_threshold = max(1, len(token_stream) // (vocab_size * 10))  # 10% of avg frequency
         
-        # Replace rare tokens with UNK
-        processed_stream = []
-        for token in token_stream:
-            if token_freq[token] <= rare_threshold:
-                processed_stream.append(self.unk_token)
-            else:
-                processed_stream.append(token)
-        
-        stream = [bos_token] * (self.n_order - 1) + processed_stream
+        stream = [bos_token] * (self.n_order - 1) + token_stream 
         
         for i in range(len(stream)):
             for order in range(1, self.n_order + 1):
@@ -104,22 +96,15 @@ class NGramLanguageModel:
         alpha = self.alpha
         probability = 0.0
         
-        # Handle unknown tokens during evaluation
-        if token not in [t for t in self.ngram_counts[0].keys() if len(t) == 1]:
-            # If token is unknown, use UNK probability
-            token = self.unk_token
-        
         for order in range(1, self.n_order + 1):
             context = history[-(order - 1):] if order > 1 else tuple()
             ngram = tuple(list(context) + [token])
             ngram_count = self.ngram_counts[order - 1].get(ngram, 0)
             context_count = self.context_counts[order - 1].get(context, 0)
-            
-            # Laplace smoothing
+
             smoothed_prob = (ngram_count + alpha) / (context_count + alpha * vocab_size)
             probability += self.interpolation_weights[order - 1] * smoothed_prob
-            
-        return probability
+            return probability
 
     def calculate_perplexity(self, token_stream, bos_token='<s>'):
         """
