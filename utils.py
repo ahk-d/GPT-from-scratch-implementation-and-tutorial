@@ -1,5 +1,6 @@
 # Utils: Common functions for GPT from scratch implementation
 # Contains shared functions used across all tasks
+# MODIFIED: BPE class simplified for better n-gram modeling
 
 import json
 import re
@@ -12,8 +13,15 @@ import math
 import pickle
 
 # Unified generation context for all tasks
-GEN_CONTEXT = "in patience lies the fortress of hope"
+GEN_CONTEXT = "to be or not to be "
 
+
+def normalize_generation_context(context):
+    """Ensure context ends appropriately for generation"""
+    context = context.strip()
+    if not context.endswith(' '):
+        context += ' '  # Add space for natural continuation
+    return context
 
 def load(path):
     """
@@ -75,6 +83,7 @@ def load_and_slice_data(percentage=0.50):
     
     print(f"Using {percentage*100:.1f}% of each split | chars: train={len(train_text)}, valid={len(valid_text)}, test={len(test_text)}")
     return train_text, valid_text, test_text
+
 def save_results(results, filename):
     """
     What it does: Saves results using pickle for robust serialization
@@ -139,9 +148,9 @@ def save_cached_bpe(bpe, merge_count, normalization):
     
     print(f"Cached BPE: {merge_count} merges, {normalization} normalization")
 
-# BPE Class
+# BPE Class - MODIFIED for better n-gram modeling
 class BPE:
-    """Fixed BPE tokenizer with separate end-of-word token"""
+    """BPE tokenizer - MODIFIED to treat spaces naturally for n-gram modeling"""
     
     def __init__(self):
         self.vocab = set()
@@ -149,49 +158,54 @@ class BPE:
         self.token2id = {}
         self.id2token = {}
         self.eos = '</s>'
-        self.end_of_word = '__'  # Separate token
+        # REMOVED: self.end_of_word - no more special tokens!
 
-    def _norm(self, text, norm):
+    def _norm(self, text, norm, keep_edge_spaces=False):
         if norm == "lower_nopunct":
             text = re.sub(r"[^\w\s]", " ", text.lower())
-            text = re.sub(r"\s+", " ", text).strip()
+            text = re.sub(r"\s+", " ", text)
         elif norm == "aggressive":
             text = re.sub(r"[^a-zA-Z0-9\s]", " ", text.lower())
-            text = re.sub(r"\s+", " ", text).strip()
+            text = re.sub(r"\s+", " ", text)
+        # Only strip when we *don't* want to preserve the boundary
+        if not keep_edge_spaces:
+            text = text.strip()
         return text
 
     def _stats(self, tokens):
+        """Count adjacent token pairs"""
         pairs = Counter()
-        for t in tokens:
-            for a, b in zip(t, t[1:]):
-                pairs[(a, b)] += 1
+        for i in range(len(tokens) - 1):
+            pairs[(tokens[i], tokens[i+1])] += 1
         return pairs
 
     def _merge_vocab(self, pair, tokens):
+        """Merge all instances of pair in token sequence"""
         a, b = pair
         ab = a + b
-        merged = []
-        for t in tokens:
-            i = 0
-            out = []
-            while i < len(t):
-                if i < len(t) - 1 and t[i] == a and t[i+1] == b:
-                    out.append(ab)
-                    i += 2
-                else:
-                    out.append(t[i])
-                    i += 1
-            merged.append(out)
-        return merged
+        new_tokens = []
+        i = 0
+        while i < len(tokens):
+            if i < len(tokens) - 1 and tokens[i] == a and tokens[i+1] == b:
+                new_tokens.append(ab)
+                i += 2
+            else:
+                new_tokens.append(tokens[i])
+                i += 1
+        return new_tokens
 
-    def _learn(self, corpus_tokens, K):
-        tokens = [[*w] for w in corpus_tokens]
+    def _learn(self, text, K):
+        """Learn BPE merges from character sequence"""
+        # MODIFIED: Start with all characters including spaces
+        tokens = list(text)
+        
         last_bucket = -1
         
         for step in range(K):
             pairs = self._stats(tokens)
             if not pairs:
                 break
+                
             (a, b), _ = pairs.most_common(1)[0]
             tokens = self._merge_vocab((a, b), tokens)
             self.merges.append((a, b))
@@ -203,12 +217,8 @@ class BPE:
                 last_bucket = bucket
         print()
         
-        # Build vocabulary from final tokens + add end-of-word token
-        self.vocab = set()
-        for t in tokens:
-            self.vocab.update(t)
-        self.vocab.add(self.end_of_word)  # Add __ as separate token
-        self.vocab = sorted(list(self.vocab))
+        # Build vocabulary from final tokens
+        self.vocab = sorted(list(set(tokens)))
         
         # Build token mappings
         self.token2id = {token: i for i, token in enumerate(self.vocab)}
@@ -217,68 +227,36 @@ class BPE:
         print(f"Final vocab size: {len(self.vocab)}")
 
     def fit(self, text, k_merges=1000, norm='lower_nopunct'):
-        text = self._norm(text, norm)
-        words = text.split()
-        print(f"Fitting BPE | words={len(words)} | merges={k_merges} | norm={norm}")
-        self._learn(words, k_merges)
+        text = self._norm(text, norm, keep_edge_spaces=False)  # unchanged behavior
+        print(f"Fitting BPE | chars={len(text)} | merges={k_merges} | norm={norm}")
+        self._learn(text, k_merges)
 
-    def encode(self, text, norm='lower_nopunct'):
-        """FIXED: Encode with __ as separate token"""
-        text = self._norm(text, norm)
-        out = []
-        words = text.split()
-        
-        for word in words:
-            if not word:
-                continue
-                
-            pieces = list(word)  # Start with individual characters
-            
-            # Apply all learned merges
-            for a, b in self.merges:
-                j = 0
-                merged = []
-                ab = a + b
-                while j < len(pieces):
-                    if j < len(pieces) - 1 and pieces[j] == a and pieces[j+1] == b:
-                        merged.append(ab)
-                        j += 2
-                    else:
-                        merged.append(pieces[j])
-                        j += 1
-                pieces = merged
-            
-            # Add word pieces + separate end-of-word token
-            out.extend(pieces)
-            out.append(self.end_of_word)  # __ as separate token
-                
-        return out
+    def encode(self, text, norm='lower_nopunct', preserve_edge_spaces=True):
+        # Preserve trailing space so the next token starts after a space
+        text = self._norm(text, norm, keep_edge_spaces=preserve_edge_spaces)
+        if preserve_edge_spaces and not text.endswith(' '):
+            text += ' '
+        tokens = list(text)
+        for a, b in self.merges:
+            tokens = self._merge_vocab((a, b), tokens)
+        return tokens
 
     def decode(self, tokens):
-        """Decode BPE tokens into text, handling '__' as spaces."""
-        if not tokens:
-            return ""
-        result = []
-        for tok in tokens:
-            if tok == self.end_of_word:
-                result.append(" ")
-            else:
-                result.append(tok)
-        text = "".join(result)
-        # Clean: collapse spaces, strip edges
-        text = re.sub(r"\s+", " ", text).strip()
-        return text
+        """MODIFIED: Simply join tokens - spaces preserved naturally"""
+        return "".join(tokens)
 
     def evaluate_tpw(self, text, norm='lower_nopunct'):
+        """Calculate tokens per word"""
         s = self._norm(text, norm)
         words = s.split()
         if not words:
             return 0.0, True, 0
+        
         toks = self.encode(text, norm)
-        # Count only non-__ tokens for TPW calculation
-        word_tokens = [t for t in toks if t != self.end_of_word]
-        avg_tpw = len(word_tokens) / len(words)
-        recon_ok = (self.decode(toks) == s)
+        # Count non-space tokens for TPW calculation
+        word_tokens = [t for t in toks if t.strip()]
+        avg_tpw = len(word_tokens) / len(words) if words else 0.0
+        recon_ok = (self.decode(toks).strip() == s.strip())
         return float(avg_tpw), bool(recon_ok), len(words)
 
 def evaluate_bpe_configuration(bpe_model, train_text, valid_text, test_text, normalization_technique):
@@ -306,50 +284,47 @@ def evaluate_bpe_configuration(bpe_model, train_text, valid_text, test_text, nor
     return results
 
 def print_configuration_summary(normalization_technique, merge_count, bpe_model, results):
-        """
-        What it does: Prints summary of BPE configuration
-        Args:
-            normalization_technique (str): Normalization technique
-            merge_count (int): Number of merges
-            bpe_model (BPE): BPE model
-            results (dict): Evaluation results
-        Returns:
-            None
-        """
-        print("=" * 64)
-        print(f"CONFIG  normalization_technique={normalization_technique} | merges(merge_count)={merge_count}")
-        print("=" * 64)
-        print(f"[SUMMARY] vocab={len(bpe_model.vocab)}")
-        
-        for split_name in ["train", "valid", "test"]:
-            split_results = results[split_name]
-            print(f"  avg tokens/word: {split_name}={split_results['avg_tokens_per_word']:.4f} (N={split_results['num_words']}) | ", end="")
-        
-        print()
-        
-
-        
-        for split_name in ["train", "valid", "test"]:
-            split_results = results[split_name]
-            print(f"  reconstruct_ok: {split_name}={split_results['reconstruct_ok']} | ", end="")
-        
-        print()
+    """
+    What it does: Prints summary of BPE configuration
+    Args:
+        normalization_technique (str): Normalization technique
+        merge_count (int): Number of merges
+        bpe_model (BPE): BPE model
+        results (dict): Evaluation results
+    Returns:
+        None
+    """
+    print("=" * 64)
+    print(f"CONFIG  normalization_technique={normalization_technique} | merges(merge_count)={merge_count}")
+    print("=" * 64)
+    print(f"[SUMMARY] vocab={len(bpe_model.vocab)}")
+    
+    for split_name in ["train", "valid", "test"]:
+        split_results = results[split_name]
+        print(f"  avg tokens/word: {split_name}={split_results['avg_tokens_per_word']:.4f} (N={split_results['num_words']}) | ", end="")
+    
+    print()
+    
+    for split_name in ["train", "valid", "test"]:
+        split_results = results[split_name]
+        print(f"  reconstruct_ok: {split_name}={split_results['reconstruct_ok']} | ", end="")
+    
+    print()
 
 def create_result_entry(normalization_technique, merge_count, bpe_model, evaluation_results):
-        """
-        What it does: Creates result entry for JSON output
-        Args:
-            normalization_technique (str): Normalization technique
-            merge_count (int): Number of merges
-            bpe_model (BPE): BPE model
-            evaluation_results (dict): Evaluation results
-        Returns:
-            dict: Result entry
-        """
-        return {
-            "normalization_technique": normalization_technique,
-            "merge_count": merge_count,
-            "vocab_size": len(bpe_model.vocab),
-            "evaluation": evaluation_results
-        }
-
+    """
+    What it does: Creates result entry for JSON output
+    Args:
+        normalization_technique (str): Normalization technique
+        merge_count (int): Number of merges
+        bpe_model (BPE): BPE model
+        evaluation_results (dict): Evaluation results
+    Returns:
+        dict: Result entry
+    """
+    return {
+        "normalization_technique": normalization_technique,
+        "merge_count": merge_count,
+        "vocab_size": len(bpe_model.vocab),
+        "evaluation": evaluation_results
+    }
