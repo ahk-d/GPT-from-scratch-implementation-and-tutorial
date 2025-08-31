@@ -9,11 +9,11 @@ import json
 from utils import (
     load_and_slice_data, BPE, evaluate_bpe_configuration, 
     print_configuration_summary, create_result_entry, save_results,
-    load_cached_bpe, save_cached_bpe
+    load_cached_bpe, save_cached_bpe, create_comprehensive_report
 )
 
 # Configuration
-PERCENTAGE = 0.10                       # 0.01=1%, 0.05=5%, 1.0=full
+PERCENTAGE = 0.50                      # 0.01=1%, 0.05=5%, 1.0=full
 MERGE_COUNTS = [1000, 2000, 2500]       # As specified in requirements
 NORMALIZATION_TECHNIQUES = ["lower_nopunct", "aggressive"]  # Simplified as requested
 
@@ -65,7 +65,10 @@ def main():
             results.append(result_entry)
     
     # Save results
-    save_results(results, 'task1_results.json')
+    save_results(results, 'task1_results.pkl')
+    
+    # Create comprehensive report
+    create_comprehensive_report(results, "Task 1")
     
     # Find best configuration
     best_config = min(results, key=lambda x: x['evaluation']['valid']['avg_tokens_per_word'])

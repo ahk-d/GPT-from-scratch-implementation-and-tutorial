@@ -15,7 +15,7 @@ import os
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe
+    load_cached_bpe, create_comprehensive_report
 )
 
 # Configuration
@@ -222,7 +222,10 @@ def main():
         }
     
     # Save results
-    save_results(results, 'task2_results.json')
+    save_results(results, 'task2_results.pkl')
+    
+    # Create comprehensive report
+    create_comprehensive_report(results, "Task 2")
     
     # Print summary
     print("\nSummary:")

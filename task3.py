@@ -18,7 +18,7 @@ from pathlib import Path
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe
+    load_cached_bpe, plot_training_curves, create_comprehensive_report
 )
 
 # Configuration
@@ -327,9 +327,19 @@ def main():
         }
         
         print(f"  Val Perplexity = {val_perplexity:.4f}")
+        
+        # Plot training curves for this configuration
+        plot_training_curves(
+            history, 
+            f'Neural Bigram (BPE merges={merge_count})', 
+            f'task3_training_curves_{merge_count}.png'
+        )
     
     # Save results
-    save_results(results, 'task3_results.json')
+    save_results(results, 'task3_results.pkl')
+    
+    # Create comprehensive report
+    create_comprehensive_report(results, "Task 3")
     
     # Print summary
     print("\nSummary:")

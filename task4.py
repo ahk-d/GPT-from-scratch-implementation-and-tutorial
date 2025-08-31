@@ -23,7 +23,7 @@ import seaborn as sns
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
-    load_cached_bpe
+    load_cached_bpe, plot_training_curves, create_comprehensive_report
 )
 
 # Configuration
@@ -837,6 +837,13 @@ def main():
             # Evaluate
             val_perplexity = evaluate_model_perplexity(model, input_batches, target_batches, device)
             
+            # Plot training curves for this configuration
+            plot_training_curves(
+                history, 
+                f'Neural Bigram (BPE merges={merge_count}, emb_dim={embedding_dim})', 
+                f'task4_neural_training_{merge_count}_{embedding_dim}.png'
+            )
+            
             neural_results[f'emb_dim={embedding_dim}'] = {
                 'val_perplexity': val_perplexity,
                 'training_history': history
@@ -907,8 +914,8 @@ def main():
         print(f"  GPT Val Perplexity = {val_perplexity:.4f}")
         print(f"  Sample text: {sample_text[:100]}...")
         
-        # Plot training history
-        plot_training_history(
+        # Plot training curves for GPT model
+        plot_training_curves(
             history, 
             f'GPT Training (BPE merges={merge_count})', 
             f'task4_gpt_training_{merge_count}.png'
@@ -945,7 +952,10 @@ def main():
             print(f"{merge_count:<12} {best_ngram:<15.4f} {best_neural:<15.4f} {gpt_perplexity:<15.4f}")
     
     # Save results
-    save_results(results, 'task4_results.json')
+    save_results(results, 'task4_results.pkl')
+    
+    # Create comprehensive report
+    create_comprehensive_report(results, "Task 4")
     
     # Print sample generated text
     print("\nSample Generated Text:")

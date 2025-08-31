@@ -79,13 +79,20 @@ This repository contains a complete implementation of GPT (Generative Pre-traine
 - **Modular Design:** Each task builds upon the previous one
 - **Comprehensive Evaluation:** Perplexity metrics and text generation
 - **Hyperparameter Tuning:** Systematic exploration of model configurations
+- **Rich Visualizations:** Professional plots and charts for analysis
 
 ## Results
 
 Each task generates:
 - Console output with real-time progress
 - Pickle files with detailed results (robust serialization)
-- Training plots (for neural models)
+- **Comprehensive visualizations and plots:**
+  - Training curves (loss and perplexity)
+  - Model comparison charts
+  - BPE analysis plots
+  - N-gram analysis plots
+  - Hyperparameter comparison charts
+  - Summary statistics and key findings
 - Generated text samples
 
 ## Technical Details
