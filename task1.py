@@ -13,8 +13,8 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.10                      # 0.01=1%, 0.1=10%, 1.0=full - Using 2% for better training
-MERGE_COUNTS = [500, 1000, 2000, 3000, 5000]  # Only 1000 and 2000 merge counts
+PERCENTAGE = 1                      # 0.01=1%, 0.1=10%, 1.0=full - Using 2% for better training
+MERGE_COUNTS = [1000, 2000, 3000]  # Only 1000 and 2000 merge counts
 NORMALIZATION_TECHNIQUES = ["lower_nopunct", "aggressive"]  # Simplified as requested
 
 def main():

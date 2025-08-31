@@ -13,9 +13,9 @@ import math
 from utils import load_and_slice_data, load_cached_bpe, save_results, GEN_CONTEXT
 
 # Config
-PERCENTAGE = 0.025  # Tiny percentage for testing
+PERCENTAGE = 0.1  # Tiny percentage for testing
 BEST_NORMALIZATION = "lower_nopunct"
-MERGE_COUNTS = [1000, 2000, 3000]  # Only test one merge count
+MERGE_COUNTS = [1000, 2000]  # Only test one merge count
 BATCH_SIZE = 16  # Smaller batch for testing
 LEARNING_RATE = 3e-4
 MAX_ITERATIONS = 500  # Reduced for testing
