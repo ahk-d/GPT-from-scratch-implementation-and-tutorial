@@ -20,6 +20,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# Colab compatibility
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    print("Running on Google Colab")
+except:
+    print("Running locally")
+
 # Import from utils
 from utils import (
     load_and_slice_data, BPE, normalize_text, save_results,
@@ -27,9 +35,9 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.10
+PERCENTAGE = 0.50                    # 0.01=1%, 0.05=5%, 1.0=full - Using 50% for larger dataset
 BEST_NORMALIZATION = "lower_nopunct"  # Best from Task 1
-MERGE_COUNTS = [1000, 2000, 2500]     # As specified in requirements
+MERGE_COUNTS = [1000, 2000]     # Only 1000 and 2000 merge counts
 EMBEDDING_DIMS = [64, 128, 256]       # Different embedding sizes to test
 BATCH_SIZE = 16
 LEARNING_RATE = 1e-3
@@ -41,13 +49,13 @@ GENERATION_MAX_TOKENS = 100
 TEMPERATURE = 0.8
 TOP_K = 40
 
-# GPT Configuration
+# GPT Configuration (increased for better performance)
 GPT_CONFIG = {
-    'n_embd': 128,      # Embedding dimension (reduced for speed)
-    'n_head': 4,        # Number of attention heads (reduced for speed)
-    'n_layer': 3,       # Number of transformer layers (reduced for speed)
+    'n_embd': 192,      # Embedding dimension (increased)
+    'n_head': 6,        # Number of attention heads (increased)
+    'n_layer': 6,       # Number of transformer layers (increased)
     'dropout': 0.1,     # Dropout rate
-    'chunk_size': 64,   # Context length (reduced for speed)
+    'chunk_size': 128,  # Context length (increased)
     'weight_decay': 0.01 # Weight decay for regularization
 }
 
@@ -239,7 +247,7 @@ class GPTModel(nn.Module):
         # Output projection
         self.output_projection = nn.Linear(n_embd, vocab_size, bias=False)
         
-        # Tie weights
+        # Tie weights (use proper weight tying)
         self.output_projection.weight = self.token_embeddings.weight
         
     def forward(self, input_tokens):
@@ -323,8 +331,12 @@ class GPTModel(nn.Module):
         
         with torch.no_grad():
             for _ in range(max_tokens):
-                # Prepare input
-                input_seq = torch.tensor(generated[-self.chunk_size:], dtype=torch.long, device=next(self.parameters()).device)
+                # Prepare input - ensure it's a tensor
+                if isinstance(generated, list):
+                    input_seq = torch.tensor(generated[-self.chunk_size:], dtype=torch.long, device=next(self.parameters()).device)
+                else:
+                    input_seq = generated[-self.chunk_size:]
+                
                 input_seq = input_seq.unsqueeze(0)  # Add batch dimension
                 
                 # Get logits
@@ -352,7 +364,149 @@ class GPTModel(nn.Module):
         
         return generated
 
-class NGramLanguageModel:
+class NeuralBigramModel(nn.Module):
+    """
+    Neural bigram model - predicts next token given previous token
+    """
+    
+    def __init__(self, vocab_size, embedding_dim):
+        """
+        What it does: Initializes neural bigram model
+        Args:
+            vocab_size (int): Size of vocabulary
+            embedding_dim (int): Dimension of embeddings
+        Returns:
+            None
+        """
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        
+        # Previous token embedding
+        self.prev_token_embedding = nn.Embedding(vocab_size, embedding_dim)
+        
+        # Hidden layer for better modeling
+        self.hidden_layer = nn.Linear(embedding_dim, embedding_dim)
+        self.activation = nn.ReLU()
+        
+        # Output projection to vocabulary size
+        self.output_projection = nn.Linear(embedding_dim, vocab_size)
+        
+    def forward(self, prev_tokens):
+        """
+        What it does: Forward pass through the model
+        Args:
+            prev_tokens (torch.Tensor): Previous token indices (B,)
+        Returns:
+            torch.Tensor: Logits for next token prediction (B, vocab_size)
+        """
+        # Get embeddings for previous tokens
+        embeddings = self.prev_token_embedding(prev_tokens)  # (B, embedding_dim)
+        
+        # Pass through hidden layer
+        hidden = self.activation(self.hidden_layer(embeddings))  # (B, embedding_dim)
+        
+        # Project to vocabulary size
+        logits = self.output_projection(hidden)  # (B, vocab_size)
+        
+        return logits
+    
+    def calculate_loss(self, prev_tokens, next_tokens):
+        """
+        What it does: Calculates loss for training
+        Args:
+            prev_tokens (torch.Tensor): Previous token indices (B,)
+            next_tokens (torch.Tensor): Next token indices (B,)
+        Returns:
+            torch.Tensor: Loss value
+        """
+        logits = self.forward(prev_tokens)  # (B, vocab_size)
+        
+        # Calculate cross entropy loss
+        loss = nn.functional.cross_entropy(logits, next_tokens)
+        
+        return loss
+    
+    def calculate_perplexity(self, prev_tokens, next_tokens):
+        """
+        What it does: Calculates perplexity
+        Args:
+            prev_tokens (torch.Tensor): Previous token indices (B,)
+            next_tokens (torch.Tensor): Next token indices (B,)
+        Returns:
+            float: Perplexity value
+        """
+        with torch.no_grad():
+            loss = self.calculate_loss(prev_tokens, next_tokens)
+            perplexity = torch.exp(loss).item()
+        return perplexity
+
+def prepare_data_for_bigram_training(token_stream, batch_size):
+    """
+    What it does: Prepares bigram data for training neural models
+    Args:
+        token_stream (list): List of token IDs
+        batch_size (int): Batch size for training
+    Returns:
+        tuple: (prev_token_batches, next_token_batches)
+    """
+    # Create bigram pairs: (prev_token, next_token)
+    bigram_pairs = []
+    for i in range(len(token_stream) - 1):
+        prev_token = token_stream[i]
+        next_token = token_stream[i + 1]
+        bigram_pairs.append((prev_token, next_token))
+    
+    # Create batches
+    prev_token_batches = []
+    next_token_batches = []
+    
+    for i in range(0, len(bigram_pairs), batch_size):
+        batch_pairs = bigram_pairs[i:i + batch_size]
+        
+        if len(batch_pairs) == batch_size:  # Only full batches
+            prev_tokens = torch.tensor([pair[0] for pair in batch_pairs], dtype=torch.long)
+            next_tokens = torch.tensor([pair[1] for pair in batch_pairs], dtype=torch.long)
+            
+            prev_token_batches.append(prev_tokens)
+            next_token_batches.append(next_tokens)
+    
+    return prev_token_batches, next_token_batches
+
+def prepare_data_for_gpt_training(token_stream, chunk_size, batch_size):
+    """
+    What it does: Prepares data for training GPT models
+    Args:
+        token_stream (list): List of token IDs
+        chunk_size (int): Context length
+        batch_size (int): Batch size for training
+    Returns:
+        tuple: (input_batches, target_batches)
+    """
+    # Create chunks of tokens
+    chunks = []
+    for i in range(0, len(token_stream) - chunk_size, chunk_size):
+        chunk = token_stream[i:i + chunk_size + 1]  # +1 for target
+        if len(chunk) == chunk_size + 1:  # Ensure full chunk
+            chunks.append(chunk)
+    
+    # Create batches
+    input_batches = []
+    target_batches = []
+    
+    for i in range(0, len(chunks), batch_size):
+        batch_chunks = chunks[i:i + batch_size]
+        
+        if len(batch_chunks) == batch_size:  # Only full batches
+            # Input: all tokens except last
+            batch_input = torch.tensor([chunk[:-1] for chunk in batch_chunks], dtype=torch.long)
+            # Target: all tokens except first
+            batch_target = torch.tensor([chunk[1:] for chunk in batch_chunks], dtype=torch.long)
+            
+            input_batches.append(batch_input)
+            target_batches.append(batch_target)
+    
+    return input_batches, target_batches
     """
     N-gram language model (reused from Task 2)
     """
@@ -562,6 +716,99 @@ def prepare_data_for_training(token_stream, chunk_size, batch_size):
     
     return input_batches, target_batches
 
+class NGramLanguageModel:
+    """
+    N-gram language model (reused from Task 2)
+    """
+    
+    def __init__(self, n_order, alpha=1.0):
+        """
+        What it does: Initializes n-gram language model
+        Args:
+            n_order (int): Order of n-gram (1=unigram, 2=bigram, etc.)
+            alpha (float): Laplace smoothing parameter
+        Returns:
+            None
+        """
+        self.n_order = n_order
+        self.alpha = alpha
+        self.vocab_size = 0
+        self.ngram_counts = [Counter() for _ in range(n_order)]
+        self.context_counts = [Counter() for _ in range(n_order)]
+        self.interpolation_weights = np.ones(n_order) / n_order
+
+    def fit(self, token_stream, vocab_size, bos_token='<s>'):
+        """
+        What it does: Trains the n-gram model on token stream
+        Args:
+            token_stream (list): List of tokens
+            vocab_size (int): Size of vocabulary
+            bos_token (str): Beginning of sequence token
+        Returns:
+            None
+        """
+        self.vocab_size = vocab_size + 1  # Include BOS in smoothing
+        stream = [bos_token] * (self.n_order - 1) + token_stream
+        
+        for i in range(len(stream)):
+            for order in range(1, self.n_order + 1):
+                if i - order + 1 < 0:
+                    continue
+                ngram = tuple(stream[i - order + 1:i + 1])
+                context = ngram[:-1]
+                self.ngram_counts[order - 1][ngram] += 1
+                self.context_counts[order - 1][context] += 1
+
+    def calculate_perplexity(self, token_stream, bos_token='<s>'):
+        """
+        What it does: Calculates perplexity on token stream
+        Args:
+            token_stream (list): List of tokens
+            bos_token (str): Beginning of sequence token
+        Returns:
+            float: Perplexity value
+        """
+        stream = [bos_token] * (self.n_order - 1) + token_stream
+        
+        log_prob_sum = 0.0
+        count = 0
+        
+        for i in range(self.n_order - 1, len(stream)):
+            token = stream[i]
+            context = tuple(stream[i - self.n_order + 1:i])
+            
+            # Calculate interpolated probability
+            prob = self._calculate_interpolated_probability(token, context)
+            log_prob_sum += math.log(prob + 1e-10)
+            count += 1
+        
+        return math.exp(-log_prob_sum / count)
+
+    def _calculate_interpolated_probability(self, token, context):
+        """
+        What it does: Calculates interpolated probability
+        Args:
+            token: Token to predict
+            context: Context tokens
+        Returns:
+            float: Interpolated probability
+        """
+        prob = 0.0
+        
+        for order in range(1, self.n_order + 1):
+            if len(context) >= order - 1:
+                ngram_context = context[-(order - 1):]
+                ngram = ngram_context + (token,)
+                
+                # Laplace smoothing
+                count = self.ngram_counts[order - 1][ngram]
+                context_count = self.context_counts[order - 1][ngram_context]
+                
+                if context_count > 0:
+                    prob += self.interpolation_weights[order - 1] * (count + self.alpha) / (context_count + self.alpha * self.vocab_size)
+        
+        return prob
+
 def train_neural_model(model, input_batches, target_batches, optimizer, max_iterations, 
                       early_stopping_patience, device):
     """
@@ -714,7 +961,15 @@ def plot_training_history(history, title, save_path):
     ax2.grid(True)
     
     plt.tight_layout()
-    plt.savefig(save_path)
+    
+    # Display the plot
+    plt.show()
+    
+    # Optionally save if path is provided
+    if save_path:
+        plt.savefig(save_path)
+        print(f"Training history saved to {save_path}")
+    
     plt.close()
 
 def main():
@@ -728,9 +983,16 @@ def main():
     print("Task 4: GPT Implementation with PyTorch")
     print("=" * 50)
     
-    # Set device - use CPU to avoid MPS issues
-    device = torch.device("cpu")
-    print(f"Using device: {device}")
+    # Set device - use CPU for stability, GPU if explicitly requested
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print("Using CUDA GPU")
+    else:
+        # Use CPU for stability (MPS can be unstable on macOS)
+        device = torch.device("cpu")
+        print("Using CPU (MPS disabled for stability)")
+    
+    print(f"Device: {device}")
     
     # Load and preprocess data
     print("Loading and preprocessing data...")
@@ -808,9 +1070,12 @@ def main():
         for embedding_dim in EMBEDDING_DIMS:
             print(f"  Testing with embedding_dim = {embedding_dim}")
             
-            # Prepare data
-            input_batches, target_batches = prepare_data_for_training(
-                train_tokens, GPT_CONFIG['chunk_size'], BATCH_SIZE
+            # Prepare data for bigram training
+            train_prev_batches, train_next_batches = prepare_data_for_bigram_training(
+                train_tokens, BATCH_SIZE
+            )
+            val_prev_batches, val_next_batches = prepare_data_for_bigram_training(
+                val_tokens, BATCH_SIZE
             )
             
             # Create model
@@ -830,18 +1095,18 @@ def main():
             
             # Train model
             history = train_neural_model(
-                model, input_batches, target_batches, optimizer, 
+                model, train_prev_batches, train_next_batches, optimizer, 
                 MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device
             )
             
-            # Evaluate
-            val_perplexity = evaluate_model_perplexity(model, input_batches, target_batches, device)
+            # Evaluate on validation data
+            val_perplexity = evaluate_model_perplexity(model, val_prev_batches, val_next_batches, device)
             
             # Plot training curves for this configuration
             plot_training_curves(
                 history, 
                 f'Neural Bigram (BPE merges={merge_count}, emb_dim={embedding_dim})', 
-                f'task4_neural_training_{merge_count}_{embedding_dim}.png'
+                None  # Display only, don't save
             )
             
             neural_results[f'emb_dim={embedding_dim}'] = {
@@ -856,9 +1121,12 @@ def main():
         # 3. Test GPT model
         print("Testing GPT model...")
         
-        # Prepare data
-        input_batches, target_batches = prepare_data_for_training(
+        # Prepare data for GPT training
+        train_input_batches, train_target_batches = prepare_data_for_gpt_training(
             train_tokens, GPT_CONFIG['chunk_size'], BATCH_SIZE
+        )
+        val_input_batches, val_target_batches = prepare_data_for_gpt_training(
+            val_tokens, GPT_CONFIG['chunk_size'], BATCH_SIZE
         )
         
         # Create GPT model
@@ -891,12 +1159,12 @@ def main():
         
         # Train GPT model
         history = train_neural_model(
-            gpt_model, input_batches, target_batches, optimizer,
+            gpt_model, train_input_batches, train_target_batches, optimizer,
             MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device
         )
         
-        # Evaluate GPT model
-        val_perplexity = evaluate_model_perplexity(gpt_model, input_batches, target_batches, device)
+        # Evaluate GPT model on validation data
+        val_perplexity = evaluate_model_perplexity(gpt_model, val_input_batches, val_target_batches, device)
         
         # Generate sample text
         sample_text = generate_text_sample(
@@ -918,7 +1186,7 @@ def main():
         plot_training_curves(
             history, 
             f'GPT Training (BPE merges={merge_count})', 
-            f'task4_gpt_training_{merge_count}.png'
+            None  # Display only, don't save
         )
     
     # Compare models across all configurations

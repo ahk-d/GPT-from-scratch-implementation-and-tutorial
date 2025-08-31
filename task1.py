@@ -13,8 +13,8 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.50                      # 0.01=1%, 0.05=5%, 1.0=full
-MERGE_COUNTS = [1000, 2000, 2500]       # As specified in requirements
+PERCENTAGE = 0.50                       # 0.01=1%, 0.05=5%, 1.0=full - Using 50% for larger dataset
+MERGE_COUNTS = [1000, 2000]  # Only 1000 and 2000 merge counts
 NORMALIZATION_TECHNIQUES = ["lower_nopunct", "aggressive"]  # Simplified as requested
 
 def main():
@@ -30,7 +30,7 @@ def main():
     
     # Load and slice data
     train_text, valid_text, test_text = load_and_slice_data(PERCENTAGE)
-    
+
     # Results storage
     results = []
     
@@ -63,7 +63,7 @@ def main():
                 normalization_technique, merge_count, bpe, evaluation_results
             )
             results.append(result_entry)
-    
+
     # Save results
     save_results(results, 'task1_results.pkl')
     

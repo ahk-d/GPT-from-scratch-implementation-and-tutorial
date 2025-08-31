@@ -14,6 +14,15 @@ from collections import Counter
 import sys
 import os
 from pathlib import Path
+import matplotlib.pyplot as plt
+
+# Colab compatibility
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+    print("Running on Google Colab")
+except:
+    print("Running locally")
 
 # Import from utils
 from utils import (
@@ -22,21 +31,25 @@ from utils import (
 )
 
 # Configuration
-PERCENTAGE = 0.10
+PERCENTAGE = 0.50                       # 0.01=1%, 0.05=5%, 1.0=full - Using 50% for larger dataset
 BEST_NORMALIZATION = "lower_nopunct"  # Best from Task 2
-MERGE_COUNTS = [1000, 2000]  # Different merge counts to test
-EMBEDDING_DIM = 128                  # Embedding dimension
-BATCH_SIZE = 32                      # Batch size for training
-LEARNING_RATE = 1e-3                 # Learning rate
-MAX_ITERATIONS = 10000               # Maximum training iterations
-EARLY_STOPPING_PATIENCE = 5          # Early stopping patience
-CHECKPOINT_SAVE_COUNT = 3            # Number of best checkpoints to save
+MERGE_COUNTS = [1000, 2000]           # Different merge counts to test (reduced for speed)
+
+# Hyperparameter search space (reduced for efficiency)
+EMBEDDING_DIMS = [128]                # Embedding dimensions to test
+BATCH_SIZES = [32]                   # Batch sizes to test
+LEARNING_RATES = [1e-3]              # Learning rates to test
+MAX_ITERATIONS = 5000                # Maximum training iterations (reduced for speed)
+EARLY_STOPPING_PATIENCE = 3          # Early stopping patience (reduced for speed)
+WEIGHT_DECAY_VALUES = [1e-4]         # Weight decay values to test
+
+# Generation settings
 GENERATION_CONTEXT = "to be or not to"
 GENERATION_MAX_TOKENS = 60
 
 class NeuralBigramModel(nn.Module):
     """
-    Neural bigram model with token embeddings
+    Neural bigram model - predicts next token given previous token
     """
     
     def __init__(self, vocab_size, embedding_dim):
@@ -52,109 +65,105 @@ class NeuralBigramModel(nn.Module):
         self.vocab_size = vocab_size
         self.embedding_dim = embedding_dim
         
-        # Token embedding table
-        self.token_embeddings = nn.Embedding(vocab_size, embedding_dim)
+        # Previous token embedding
+        self.prev_token_embedding = nn.Embedding(vocab_size, embedding_dim)
+        
+        # Hidden layer for better modeling
+        self.hidden_layer = nn.Linear(embedding_dim, embedding_dim)
+        self.activation = nn.ReLU()
         
         # Output projection to vocabulary size
         self.output_projection = nn.Linear(embedding_dim, vocab_size)
         
-    def forward(self, input_tokens):
+    def forward(self, prev_tokens):
         """
         What it does: Forward pass through the model
         Args:
-            input_tokens (torch.Tensor): Input token indices (B,) or (B, T)
+            prev_tokens (torch.Tensor): Previous token indices (B,)
         Returns:
-            torch.Tensor: Logits for next token prediction (B, vocab_size) or (B, T, vocab_size)
+            torch.Tensor: Logits for next token prediction (B, vocab_size)
         """
-        # Handle both 1D and 2D input
-        if len(input_tokens.shape) == 1:
-            # Single token per batch: (B,) -> (B, 1)
-            input_tokens = input_tokens.unsqueeze(1)
+        # Get embeddings for previous tokens
+        embeddings = self.prev_token_embedding(prev_tokens)  # (B, embedding_dim)
         
-        # Get embeddings for input tokens
-        embeddings = self.token_embeddings(input_tokens)  # (B, T, embedding_dim)
+        # Pass through hidden layer
+        hidden = self.activation(self.hidden_layer(embeddings))  # (B, embedding_dim)
         
         # Project to vocabulary size
-        logits = self.output_projection(embeddings)  # (B, T, vocab_size)
+        logits = self.output_projection(hidden)  # (B, vocab_size)
         
         return logits
     
-    def calculate_loss(self, input_tokens, target_tokens):
+    def calculate_loss(self, prev_tokens, next_tokens):
         """
         What it does: Calculates loss for training
         Args:
-            input_tokens (torch.Tensor): Input token indices
-            target_tokens (torch.Tensor): Target token indices
+            prev_tokens (torch.Tensor): Previous token indices (B,)
+            next_tokens (torch.Tensor): Next token indices (B,)
         Returns:
             torch.Tensor: Loss value
         """
-        logits = self.forward(input_tokens)  # (B, T, vocab_size)
-        
-        # Reshape for cross entropy loss
-        B, T, C = logits.shape
-        logits_flat = logits.view(B * T, C)  # (B*T, vocab_size)
-        targets_flat = target_tokens.view(B * T)  # (B*T)
+        logits = self.forward(prev_tokens)  # (B, vocab_size)
         
         # Calculate cross entropy loss
-        loss = nn.functional.cross_entropy(logits_flat, targets_flat)
+        loss = nn.functional.cross_entropy(logits, next_tokens)
         
         return loss
     
-    def calculate_perplexity(self, input_tokens, target_tokens):
+    def calculate_perplexity(self, prev_tokens, next_tokens):
         """
         What it does: Calculates perplexity
         Args:
-            input_tokens (torch.Tensor): Input token indices
-            target_tokens (torch.Tensor): Target token indices
+            prev_tokens (torch.Tensor): Previous token indices (B,)
+            next_tokens (torch.Tensor): Next token indices (B,)
         Returns:
             float: Perplexity value
         """
         with torch.no_grad():
-            loss = self.calculate_loss(input_tokens, target_tokens)
+            loss = self.calculate_loss(prev_tokens, next_tokens)
             perplexity = torch.exp(loss).item()
         return perplexity
 
-def prepare_data_for_training(token_stream, chunk_size, batch_size):
+def prepare_data_for_training(token_stream, batch_size):
     """
-    What it does: Prepares data for training neural models
+    What it does: Prepares bigram data for training neural models
     Args:
-        token_stream (list): List of tokens
-        chunk_size (int): Context length
-        batch_size (int): Batch size
+        token_stream (list): List of token IDs
+        batch_size (int): Batch size for training
     Returns:
-        tuple: (input_batches, target_batches)
+        tuple: (prev_token_batches, next_token_batches)
     """
-    # Create sequences
-    sequences = []
-    for i in range(0, len(token_stream) - chunk_size, chunk_size):
-        sequence = token_stream[i:i + chunk_size + 1]
-        if len(sequence) == chunk_size + 1:
-            sequences.append(sequence)
+    # Create bigram pairs: (prev_token, next_token)
+    bigram_pairs = []
+    for i in range(len(token_stream) - 1):
+        prev_token = token_stream[i]
+        next_token = token_stream[i + 1]
+        bigram_pairs.append((prev_token, next_token))
     
     # Create batches
-    input_batches = []
-    target_batches = []
+    prev_token_batches = []
+    next_token_batches = []
     
-    for i in range(0, len(sequences), batch_size):
-        batch_sequences = sequences[i:i + batch_size]
-        if len(batch_sequences) == batch_size:
-            # Prepare input and target
-            batch_input = torch.tensor([seq[:-1] for seq in batch_sequences], dtype=torch.long)
-            batch_target = torch.tensor([seq[1:] for seq in batch_sequences], dtype=torch.long)
+    for i in range(0, len(bigram_pairs), batch_size):
+        batch_pairs = bigram_pairs[i:i + batch_size]
+        
+        if len(batch_pairs) == batch_size:  # Only full batches
+            prev_tokens = torch.tensor([pair[0] for pair in batch_pairs], dtype=torch.long)
+            next_tokens = torch.tensor([pair[1] for pair in batch_pairs], dtype=torch.long)
             
-            input_batches.append(batch_input)
-            target_batches.append(batch_target)
+            prev_token_batches.append(prev_tokens)
+            next_token_batches.append(next_tokens)
     
-    return input_batches, target_batches
+    return prev_token_batches, next_token_batches
 
-def train_neural_model(model, input_batches, target_batches, optimizer, max_iterations, 
+def train_neural_model(model, prev_token_batches, next_token_batches, optimizer, max_iterations, 
                       early_stopping_patience, device):
     """
-    What it does: Trains a neural model with early stopping
+    What it does: Trains a neural bigram model with early stopping
     Args:
         model: Neural model to train
-        input_batches: Input batches
-        target_batches: Target batches
+        prev_token_batches: Previous token batches
+        next_token_batches: Next token batches
         optimizer: Optimizer
         max_iterations: Maximum training iterations
         early_stopping_patience: Early stopping patience
@@ -171,13 +180,13 @@ def train_neural_model(model, input_batches, target_batches, optimizer, max_iter
     
     for iteration in range(max_iterations):
         # Sample random batch
-        batch_idx = np.random.randint(0, len(input_batches))
-        input_batch = input_batches[batch_idx].to(device)
-        target_batch = target_batches[batch_idx].to(device)
+        batch_idx = np.random.randint(0, len(prev_token_batches))
+        prev_batch = prev_token_batches[batch_idx].to(device)
+        next_batch = next_token_batches[batch_idx].to(device)
         
         # Forward pass
         optimizer.zero_grad()
-        loss = model.calculate_loss(input_batch, target_batch)
+        loss = model.calculate_loss(prev_batch, next_batch)
         
         # Backward pass
         loss.backward()
@@ -205,13 +214,13 @@ def train_neural_model(model, input_batches, target_batches, optimizer, max_iter
     
     return history
 
-def evaluate_model_perplexity(model, input_batches, target_batches, device):
+def evaluate_model_perplexity(model, prev_token_batches, next_token_batches, device):
     """
     What it does: Evaluates model perplexity on validation data
     Args:
         model: Model to evaluate
-        input_batches: Input batches
-        target_batches: Target batches
+        prev_token_batches: Previous token batches
+        next_token_batches: Next token batches
         device: Device to evaluate on
     Returns:
         float: Average perplexity
@@ -220,36 +229,43 @@ def evaluate_model_perplexity(model, input_batches, target_batches, device):
     model.to(device)
     
     total_loss = 0.0
-    total_tokens = 0
+    total_batches = 0
     
     with torch.no_grad():
-        for input_batch, target_batch in zip(input_batches, target_batches):
-            input_batch = input_batch.to(device)
-            target_batch = target_batch.to(device)
+        for prev_batch, next_batch in zip(prev_token_batches, next_token_batches):
+            prev_batch = prev_batch.to(device)
+            next_batch = next_batch.to(device)
             
-            loss = model.calculate_loss(input_batch, target_batch)
-            total_loss += loss.item() * input_batch.numel()
-            total_tokens += input_batch.numel()
+            loss = model.calculate_loss(prev_batch, next_batch)
+            total_loss += loss.item()
+            total_batches += 1
     
-    avg_loss = total_loss / total_tokens
+    avg_loss = total_loss / total_batches
     perplexity = np.exp(avg_loss)
     
     return perplexity
 
 def main():
     """
-    What it does: Main function to run Task 3
+    What it does: Main function to run Task 3 with comprehensive hyperparameter search
     Args:
         None
     Returns:
         None
     """
-    print("Task 3: Neural Bigram Embeddings")
-    print("=" * 50)
+    print("Task 3: Neural Bigram Language Modeling with Hyperparameter Search")
+    print("=" * 70)
     
-    # Set device
-    device = torch.device("cpu")  # Use CPU to avoid MPS issues
-    print(f"Using device: {device}")
+    # Set device - use CPU for stability, GPU if explicitly requested
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        print("Using CUDA GPU")
+    else:
+        # Use CPU for stability (MPS can be unstable on macOS)
+        device = torch.device("cpu")
+        print("Using CPU (MPS disabled for stability)")
+    
+    print(f"Device: {device}")
     
     # Load data
     train_text, valid_text, test_text = load_and_slice_data(PERCENTAGE)
@@ -287,53 +303,156 @@ def main():
         
         vocab_size = len(unique_tokens)
         
-        # Prepare data for training
-        chunk_size = 64  # Context length
-        input_batches, target_batches = prepare_data_for_training(
-            train_tokens, chunk_size, BATCH_SIZE
-        )
+        # Hyperparameter search
+        best_config = None
+        best_perplexity = float('inf')
+        hyperparameter_results = {}
         
-        # Create model
-        model = NeuralBigramModel(vocab_size, EMBEDDING_DIM)
+        total_configs = len(EMBEDDING_DIMS) * len(BATCH_SIZES) * len(LEARNING_RATES) * len(WEIGHT_DECAY_VALUES)
+        config_count = 0
         
-        # Initialize weights properly
-        def init_weights(m):
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    torch.nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.Embedding):
-                torch.nn.init.normal_(m.weight, mean=0.0, std=0.02)
+        print(f"  Testing {total_configs} hyperparameter configurations...")
         
-        model.apply(init_weights)
-        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+        for emb_dim in EMBEDDING_DIMS:
+            for batch_size in BATCH_SIZES:
+                for lr in LEARNING_RATES:
+                    for weight_decay in WEIGHT_DECAY_VALUES:
+                        config_count += 1
+                        config_key = f"emb_dim={emb_dim}_batch={batch_size}_lr={lr}_wd={weight_decay}"
+                        
+                        print(f"    Config {config_count}/{total_configs}: {config_key}")
+                        
+                        # Prepare data for training and validation - FIXED
+                        train_prev_batches, train_next_batches = prepare_data_for_training(
+                            train_tokens, batch_size
+                        )
+                        valid_prev_batches, valid_next_batches = prepare_data_for_training(
+                            valid_tokens, batch_size
+                        )
+                        
+                        # Create model
+                        model = NeuralBigramModel(vocab_size, emb_dim)
+                        
+                        # Initialize weights properly
+                        def init_weights(m):
+                            if isinstance(m, nn.Linear):
+                                torch.nn.init.xavier_uniform_(m.weight)
+                                if m.bias is not None:
+                                    torch.nn.init.zeros_(m.bias)
+                            elif isinstance(m, nn.Embedding):
+                                torch.nn.init.normal_(m.weight, mean=0.0, std=0.02)
+                        
+                        model.apply(init_weights)
+                        
+                        # Create optimizer with weight decay
+                        optimizer = optim.AdamW(
+                            model.parameters(), 
+                            lr=lr, 
+                            weight_decay=weight_decay
+                        )
+                        
+                        # Train model
+                        history = train_neural_model(
+                            model, train_prev_batches, train_next_batches, optimizer, 
+                            MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device
+                        )
+                        
+                        # Evaluate on validation data - FIXED
+                        val_perplexity = evaluate_model_perplexity(
+                            model, valid_prev_batches, valid_next_batches, device
+                        )
+                        
+                        # Store results
+                        hyperparameter_results[config_key] = {
+                            'embedding_dim': emb_dim,
+                            'batch_size': batch_size,
+                            'learning_rate': lr,
+                            'weight_decay': weight_decay,
+                            'val_perplexity': val_perplexity,
+                            'training_history': history,
+                            'final_loss': history['losses'][-1] if history['losses'] else float('inf')
+                        }
+                        
+                        print(f"      Val Perplexity = {val_perplexity:.4f}")
+                        
+                        # Update best configuration
+                        if val_perplexity < best_perplexity:
+                            best_perplexity = val_perplexity
+                            best_config = config_key
+                        
+                        # Clean up to save memory
+                        del model, optimizer, history
         
-        # Train model
-        history = train_neural_model(
-            model, input_batches, target_batches, optimizer, 
-            MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device
-        )
+        # Train best model on full data and evaluate on test set
+        if best_config:
+            print(f"\n  Re-training best configuration on full data: {best_config}")
+            best_result = hyperparameter_results[best_config]
+            
+            # Extract best hyperparameters
+            best_emb_dim = best_result['embedding_dim']
+            best_batch_size = best_result['batch_size']
+            best_lr = best_result['learning_rate']
+            best_weight_decay = best_result['weight_decay']
+            
+            # Prepare test data
+            test_prev_batches, test_next_batches = prepare_data_for_training(
+                test_tokens, best_batch_size
+            )
+            
+            # Re-prepare training data with best batch size
+            train_prev_batches, train_next_batches = prepare_data_for_training(
+                train_tokens, best_batch_size
+            )
+            
+            # Create and train final model
+            final_model = NeuralBigramModel(vocab_size, best_emb_dim)
+            final_model.apply(lambda m: init_weights(m) if hasattr(m, 'weight') else None)
+            
+            final_optimizer = optim.AdamW(
+                final_model.parameters(), 
+                lr=best_lr, 
+                weight_decay=best_weight_decay
+            )
+            
+            # Train final model
+            final_history = train_neural_model(
+                final_model, train_prev_batches, train_next_batches, final_optimizer,
+                MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device
+            )
+            
+            # Evaluate on test set
+            test_perplexity = evaluate_model_perplexity(
+                final_model, test_prev_batches, test_next_batches, device
+            )
+            
+            print(f"  Final test perplexity: {test_perplexity:.4f}")
+            
+            # Add test results to best config
+            hyperparameter_results[best_config]['test_perplexity'] = test_perplexity
+            hyperparameter_results[best_config]['final_training_history'] = final_history
         
-        # Evaluate
-        val_perplexity = evaluate_model_perplexity(model, input_batches, target_batches, device)
-        
+        # Store results for this merge count
         results[merge_count] = {
             'vocab_size': vocab_size,
-            'embedding_dim': EMBEDDING_DIM,
-            'val_perplexity': val_perplexity,
-            'training_history': history,
             'token_to_id': token_to_id,
-            'id_to_token': id_to_token
+            'id_to_token': id_to_token,
+            'best_config': best_config,
+            'best_perplexity': best_perplexity,
+            'hyperparameter_results': hyperparameter_results
         }
         
-        print(f"  Val Perplexity = {val_perplexity:.4f}")
+        print(f"  Best configuration: {best_config}")
+        print(f"  Best validation perplexity: {best_perplexity:.4f}")
+        if best_config and 'test_perplexity' in hyperparameter_results[best_config]:
+            print(f"  Test perplexity: {hyperparameter_results[best_config]['test_perplexity']:.4f}")
         
-        # Plot training curves for this configuration
-        plot_training_curves(
-            history, 
-            f'Neural Bigram (BPE merges={merge_count})', 
-            f'task3_training_curves_{merge_count}.png'
-        )
+        # Plot training curves for best configuration
+        if best_config and best_config in hyperparameter_results:
+            best_history = hyperparameter_results[best_config]['training_history']
+            plot_training_curves(
+                best_history, 
+                f'Neural Bigram (BPE merges={merge_count}, {best_config})'
+            )
     
     # Save results
     save_results(results, 'task3_results.pkl')
@@ -343,13 +462,26 @@ def main():
     
     # Print summary
     print("\nSummary:")
-    print("-" * 60)
+    print("-" * 80)
     for merge_count in MERGE_COUNTS:
         if merge_count in results:
             result = results[merge_count]
             print(f"BPE merges: {merge_count}")
             print(f"  Vocab size: {result['vocab_size']}")
-            print(f"  Val Perplexity: {result['val_perplexity']:.4f}")
+            print(f"  Best config: {result['best_config']}")
+            print(f"  Best validation perplexity: {result['best_perplexity']:.4f}")
+            
+            # Show test perplexity if available
+            if result['best_config'] and 'test_perplexity' in result['hyperparameter_results'][result['best_config']]:
+                test_perp = result['hyperparameter_results'][result['best_config']]['test_perplexity']
+                print(f"  Test perplexity: {test_perp:.4f}")
+            
+            # Show top 3 configurations
+            configs = result['hyperparameter_results']
+            sorted_configs = sorted(configs.items(), key=lambda x: x[1]['val_perplexity'])
+            print(f"  Top 3 configurations:")
+            for i, (config, config_result) in enumerate(sorted_configs[:3]):
+                print(f"    {i+1}. {config}: {config_result['val_perplexity']:.4f}")
     
     print("\nTask 3 completed!")
 
