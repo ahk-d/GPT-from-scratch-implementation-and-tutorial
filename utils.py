@@ -269,7 +269,6 @@ class BPE:
         # Add end-of-word symbol before spaces for consistency with training
         text = text.replace(' ', f' {self.end_of_word} ')
         out = []
-        
         for w in text.split():
             pieces = [* (w + self.eos)]
             for a, b in self.merges:
