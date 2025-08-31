@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import math
 import pickle
+import os
 
 # Only import from utils (shared utilities)
 from utils import (
@@ -22,8 +23,8 @@ BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]
 BATCH_SIZE = 32
 LEARNING_RATE = 3e-4
-MAX_ITERATIONS = 15000
-EARLY_STOPPING_PATIENCE = 2000
+MAX_ITERATIONS = 1000
+EARLY_STOPPING_PATIENCE = 6000
 VALIDATION_INTERVAL = 200
 
 # GPT Configurations to test
@@ -33,7 +34,7 @@ GPT_CONFIGS = [
         'n_embd': 256,
         'n_head': 8, 
         'n_layer': 6,
-        'dropout': 0.1,
+        'dropout': 0.2,
         'chunk_size': 128,
     },
     {
@@ -41,7 +42,7 @@ GPT_CONFIGS = [
         'n_embd': 384,
         'n_head': 12,
         'n_layer': 8,
-        'dropout': 0.1,
+        'dropout': 0.2,
         'chunk_size': 256,
     }
 ]
@@ -283,7 +284,7 @@ def prepare_gpt_data(token_stream, chunk_size, batch_size):
     
     # Create overlapping sequences for better data utilization
     sequences = []
-    stride = chunk_size // 4  # 75% overlap
+    stride = chunk_size // 2  # 50% overlap (reduced from 75%)
     
     for i in range(0, len(token_stream) - chunk_size, stride):
         sequence = token_stream[i:i + chunk_size + 1]
@@ -318,10 +319,13 @@ def train_gpt_model(model, train_batches, target_batches, valid_batches, valid_t
     patience_counter = 0
     best_model_state = None
     
+    # Training loss tracking for early stopping
+    best_train_loss = float('inf')
+    train_patience_counter = 0
+    
     print(f"Starting training with {len(train_batches)} training batches")
     
     for iteration in range(max_iterations):
-        # Sample random training batch
         batch_idx = np.random.randint(0, len(train_batches))
         input_batch = train_batches[batch_idx].to(device)
         target_batch = target_batches[batch_idx].to(device)
@@ -342,6 +346,23 @@ def train_gpt_model(model, train_batches, target_batches, valid_batches, valid_t
         loss_val = loss.item()
         history['losses'].append(loss_val)
         history['perplexities'].append(math.exp(loss_val))
+        if iteration % 500 == 0:
+            print("current iteration: ", iteration)
+            print("current loss: ", loss_val)
+            print("current perplexity: ", math.exp(loss_val))
+        
+        # Early stopping based on training loss (prevent useless training)
+        if iteration > 100:  # Wait for initial training
+            if loss_val < best_train_loss:
+                best_train_loss = loss_val
+                train_patience_counter = 0
+            else:
+                train_patience_counter += 1
+            
+            # Stop if training loss hasn't improved for 200 iterations
+            if train_patience_counter >= 200:
+                print(f"Early stopping at iteration {iteration}: training loss not improving")
+                break
         
         # Validation check
         if iteration % VALIDATION_INTERVAL == 0:
@@ -351,7 +372,7 @@ def train_gpt_model(model, train_batches, target_batches, valid_batches, valid_t
             
             with torch.no_grad():
                 # Use subset of validation batches for speed
-                for val_input, val_target in zip(valid_batches[:10], valid_target_batches[:10]):
+                for val_input, val_target in zip(valid_batches[:5], valid_target_batches[:5]):  # Reduced from 10 to 5
                     val_input = val_input.to(device)
                     val_target = val_target.to(device)
                     batch_val_loss = model.calculate_loss(val_input, val_target)
@@ -468,7 +489,7 @@ def main():
             optimizer = optim.AdamW(
                 gpt_model.parameters(),
                 lr=LEARNING_RATE,
-                weight_decay=0.01
+                weight_decay=0.03
             )
             
             # Train model
@@ -518,7 +539,7 @@ def main():
                 model_path = None
             
             # Generate sample text
-            context = "to be or not to be"
+            context = "to be or not to"
             context_tokens = bpe.encode(context)
             context_ids = [token_to_id.get(token, 0) for token in context_tokens]
             
@@ -584,9 +605,9 @@ def main():
                 model_path = config_result.get('model_path', 'N/A')
                 print(f"  {config_name:12}: PPL = {val_perplexity:7.2f} | {model_path}")
     
-    print(f"\n🔧 How to use your trained GPT models:")
+    print(f"How to use your trained GPT models:")
     print(f"python generate_text.py --model task4_gpt_2000 --context 'to be or not to be'")
-    print(f"\n💡 GPT models use transformer architecture with:")
+    print(f"GPT models use transformer architecture with:")
     print(f"- Multi-head self-attention (looks at ALL previous tokens)")
     print(f"- Multiple transformer layers for complex pattern learning")
     print(f"- Position embeddings for sequence understanding")

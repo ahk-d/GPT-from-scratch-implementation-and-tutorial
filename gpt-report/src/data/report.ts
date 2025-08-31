@@ -58,7 +58,7 @@ export const reportData: ReportData = {
       },
       task4: {
         title: "Task 4: GPT Architecture",
-        description: "Full transformer implementation with attention mechanisms",
+        description: "Complete transformer implementation with attention mechanisms and text generation",
         color: "orange"
       }
     }
@@ -258,73 +258,188 @@ export const reportData: ReportData = {
         results: {
           title: "Key Results",
           data: {
-            status: "Coming Soon: Task 4 implementation and results will be added as the project progresses. This will include transformer architecture, attention mechanisms, and full GPT model training results."
+            architectures: {
+              gptSmall: {
+                layers: 6,
+                embeddingDim: 256,
+                heads: 8,
+                chunkSize: 128,
+                parameters: "~1.2M"
+              },
+              gptMedium: {
+                layers: 8,
+                embeddingDim: 384,
+                heads: 12,
+                chunkSize: 256,
+                parameters: "~3.8M"
+              }
+            },
+            training: {
+              batchSize: 32,
+              learningRate: "3e-4",
+              maxIterations: 1000,
+              earlyStopping: "6000 iterations patience"
+            },
+            features: {
+              causalAttention: "Prevents looking at future tokens",
+              multiHeadAttention: "8-12 attention heads",
+              positionEmbeddings: "Learned positional encoding",
+              advancedSampling: "Top-k and top-p (nucleus) sampling"
+            }
           }
         },
         codeSegments: [
           {
-            title: "Multi-Head Attention",
-            code: `class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model, num_heads):
+            title: "Causal Self-Attention Implementation",
+            code: `class CausalSelfAttention(nn.Module):
+    def __init__(self, n_embd, n_head, dropout=0.1):
         super().__init__()
-        self.num_heads = num_heads
-        self.d_model = d_model
-        self.d_k = d_model // num_heads
+        assert n_embd % n_head == 0
         
-        self.w_q = nn.Linear(d_model, d_model)
-        self.w_k = nn.Linear(d_model, d_model)
-        self.w_v = nn.Linear(d_model, d_model)
-        self.w_o = nn.Linear(d_model, d_model)
-    
-    def forward(self, q, k, v, mask=None):
-        batch_size = q.size(0)
+        self.n_embd = n_embd
+        self.n_head = n_head
+        self.head_dim = n_embd // n_head
         
-        # Linear transformations and reshape
-        q = self.w_q(q).view(batch_size, -1, self.num_heads, self.d_k)
-        k = self.w_k(k).view(batch_size, -1, self.num_heads, self.d_k)
-        v = self.w_v(v).view(batch_size, -1, self.num_heads, self.d_k)
+        # QKV projections
+        self.query = nn.Linear(n_embd, n_embd, bias=False)
+        self.key = nn.Linear(n_embd, n_embd, bias=False)
+        self.value = nn.Linear(n_embd, n_embd, bias=False)
+        self.output = nn.Linear(n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
         
-        # Transpose for attention computation
-        q = q.transpose(1, 2)
-        k = k.transpose(1, 2)
-        v = v.transpose(1, 2)
+    def forward(self, x):
+        B, T, C = x.shape
         
-        # Compute attention
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, -1e9)
-        attention = F.softmax(scores, dim=-1)
+        # Compute Q, K, V
+        q = self.query(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = self.key(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = self.value(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         
-        # Apply attention to values
-        out = torch.matmul(attention, v)
-        out = out.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
-        return self.w_o(out)`,
+        # Scaled dot-product attention
+        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        
+        # Causal mask (prevent looking at future tokens)
+        mask = torch.triu(torch.ones(T, T, device=x.device), diagonal=1).bool()
+        scores = scores.masked_fill(mask, float('-inf'))
+        
+        # Attention weights and output
+        attn = F.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
+        
+        out = torch.matmul(attn, v)
+        out = out.transpose(1, 2).contiguous().view(B, T, C)
+        
+        return self.output(out)`,
             language: "python"
           },
           {
-            title: "Transformer Block",
+            title: "Transformer Block with Residual Connections",
             code: `class TransformerBlock(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+    def __init__(self, n_embd, n_head, dropout=0.1):
         super().__init__()
-        self.attention = MultiHeadAttention(d_model, num_heads)
-        self.feed_forward = nn.Sequential(
-            nn.Linear(d_model, d_ff),
-            nn.ReLU(),
-            nn.Linear(d_ff, d_model)
-        )
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.dropout = nn.Dropout(dropout)
-    
-    def forward(self, x, mask=None):
-        # Self-attention with residual connection
-        attn_out = self.attention(x, x, x, mask)
-        x = self.norm1(x + self.dropout(attn_out))
+        self.attention = CausalSelfAttention(n_embd, n_head, dropout)
+        self.mlp = MLP(n_embd, dropout)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
         
-        # Feed-forward with residual connection
-        ff_out = self.feed_forward(x)
-        x = self.norm2(x + self.dropout(ff_out))
+    def forward(self, x):
+        # Pre-layer normalization (more stable than post-layer norm)
+        x = x + self.attention(self.ln1(x))
+        x = x + self.mlp(self.ln2(x))
         return x`,
+            language: "python"
+          },
+          {
+            title: "Complete GPT Model Architecture",
+            code: `class GPTModel(nn.Module):
+    def __init__(self, vocab_size, n_embd, n_head, n_layer, chunk_size, dropout=0.1):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.n_embd = n_embd
+        self.chunk_size = chunk_size
+        
+        # Token and position embeddings
+        self.token_embeddings = nn.Embedding(vocab_size, n_embd)
+        self.position_embeddings = nn.Embedding(chunk_size, n_embd)
+        self.dropout = nn.Dropout(dropout)
+        
+        # Stack of transformer blocks
+        self.blocks = nn.ModuleList([
+            TransformerBlock(n_embd, n_head, dropout) 
+            for _ in range(n_layer)
+        ])
+        
+        # Final layer norm and output projection
+        self.ln_f = nn.LayerNorm(n_embd)
+        self.output_projection = nn.Linear(n_embd, vocab_size, bias=False)
+        
+    def forward(self, input_tokens):
+        B, T = input_tokens.shape
+        assert T <= self.chunk_size, f"Sequence length {T} exceeds chunk_size {self.chunk_size}"
+        
+        # Get embeddings
+        token_emb = self.token_embeddings(input_tokens)
+        pos_emb = self.position_embeddings(torch.arange(T, device=input_tokens.device))
+        
+        # Combine embeddings
+        x = self.dropout(token_emb + pos_emb)
+        
+        # Pass through transformer blocks
+        for block in self.blocks:
+            x = block(x)
+        
+        # Final layer norm and projection to vocabulary
+        x = self.ln_f(x)
+        logits = self.output_projection(x)
+        
+        return logits`,
+            language: "python"
+          },
+          {
+            title: "Advanced Text Generation with Sampling",
+            code: `def generate(self, context_tokens, max_tokens, temperature=1.0, top_k=50, top_p=0.9):
+    self.eval()
+    generated = context_tokens.copy()
+    device = next(self.parameters()).device
+    
+    with torch.no_grad():
+        for _ in range(max_tokens):
+            # Use last chunk_size tokens as context
+            input_seq = torch.tensor(generated[-self.chunk_size:], 
+                                   dtype=torch.long, device=device).unsqueeze(0)
+            
+            # Get logits for next token
+            logits = self.forward(input_seq)[0, -1, :]
+            
+            # Apply temperature
+            if temperature != 1.0:
+                logits = logits / temperature
+            
+            # Apply top-k filtering
+            if top_k > 0:
+                top_k_logits, top_k_indices = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits = torch.full_like(logits, float('-inf'))
+                logits[top_k_indices] = top_k_logits
+            
+            # Apply top-p (nucleus) filtering  
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # Remove tokens with cumulative probability above threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
+                sorted_indices_to_remove[0] = 0
+                
+                indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                logits[indices_to_remove] = float('-inf')
+            
+            # Sample from the filtered distribution
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, 1).item()
+            generated.append(next_token)
+    
+    return generated`,
             language: "python"
           }
         ]

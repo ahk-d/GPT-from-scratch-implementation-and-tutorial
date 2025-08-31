@@ -413,7 +413,7 @@ tokens = bpe.encode(text)`,
       {
         id: 'causal_attention',
         name: 'CausalSelfAttention',
-        description: 'Causal self-attention implementation from scratch',
+        description: 'Multi-head causal self-attention mechanism that prevents looking at future tokens',
         inputs: ['n_embd', 'n_head', 'dropout'],
         outputs: ['attention_layer'],
         implementation: `class CausalSelfAttention(nn.Module):
@@ -425,42 +425,57 @@ tokens = bpe.encode(text)`,
         self.n_head = n_head
         self.head_dim = n_embd // n_head
         
+        # QKV projections
         self.query = nn.Linear(n_embd, n_embd, bias=False)
         self.key = nn.Linear(n_embd, n_embd, bias=False)
         self.value = nn.Linear(n_embd, n_embd, bias=False)
         self.output = nn.Linear(n_embd, n_embd)
         self.dropout = nn.Dropout(dropout)
-    
-    def forward(self, x):
-        B, T, C = x.shape
         
-        q = self.query(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-        k = self.key(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
-        v = self.value(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        self._init_weights()
         
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        
-        # Apply causal mask
-        if self.causal_mask is None or self.causal_mask.size(0) != T:
-            self.causal_mask = torch.triu(torch.ones(T, T), diagonal=1).bool()
-            self.causal_mask = self.causal_mask.to(x.device)
-        
-        scores = scores.masked_fill(self.causal_mask, float('-inf'))
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        
-        out = torch.matmul(attn_weights, v)
-        out = out.transpose(1, 2).contiguous().view(B, T, C)
-        out = self.output(out)
-        
-        return out`,
+    def _init_weights(self):
+        nn.init.normal_(self.query.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.key.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.value.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.output.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(self.output.bias)`,
         category: 'model',
         complexity: 'high'
       },
       {
+        id: 'mlp_layer',
+        name: 'MLP',
+        description: 'Position-wise feed-forward network with GELU activation',
+        inputs: ['n_embd', 'dropout'],
+        outputs: ['mlp_layer'],
+        implementation: `class MLP(nn.Module):
+    def __init__(self, n_embd, dropout=0.1):
+        super().__init__()
+        self.fc1 = nn.Linear(n_embd, 4 * n_embd)
+        self.fc2 = nn.Linear(4 * n_embd, n_embd)
+        self.dropout = nn.Dropout(dropout)
+        
+        self._init_weights()
+        
+    def _init_weights(self):
+        nn.init.normal_(self.fc1.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.fc2.weight, mean=0.0, std=0.02)
+        nn.init.zeros_(self.fc1.bias)
+        nn.init.zeros_(self.fc2.bias)
+        
+    def forward(self, x):
+        x = F.gelu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        return self.dropout(x)`,
+        category: 'model',
+        complexity: 'medium'
+      },
+      {
         id: 'transformer_block',
         name: 'TransformerBlock',
-        description: 'Transformer block with attention and MLP',
+        description: 'Transformer block with attention and MLP using pre-layer normalization',
         inputs: ['n_embd', 'n_head', 'dropout'],
         outputs: ['transformer_block'],
         implementation: `class TransformerBlock(nn.Module):
@@ -470,8 +485,9 @@ tokens = bpe.encode(text)`,
         self.mlp = MLP(n_embd, dropout)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
-    
+        
     def forward(self, x):
+        # Pre-layer normalization (more stable than post-layer norm)
         x = x + self.attention(self.ln1(x))
         x = x + self.mlp(self.ln2(x))
         return x`,
@@ -481,7 +497,7 @@ tokens = bpe.encode(text)`,
       {
         id: 'gpt_model',
         name: 'GPTModel',
-        description: 'Complete GPT model with transformer architecture',
+        description: 'Complete GPT model with transformer architecture and position embeddings',
         inputs: ['vocab_size', 'n_embd', 'n_head', 'n_layer', 'chunk_size', 'dropout'],
         outputs: ['gpt_model'],
         implementation: `class GPTModel(nn.Module):
@@ -491,108 +507,160 @@ tokens = bpe.encode(text)`,
         self.n_embd = n_embd
         self.chunk_size = chunk_size
         
+        # Token and position embeddings
         self.token_embeddings = nn.Embedding(vocab_size, n_embd)
         self.position_embeddings = nn.Embedding(chunk_size, n_embd)
         self.dropout = nn.Dropout(dropout)
         
+        # Stack of transformer blocks
         self.blocks = nn.ModuleList([
-            TransformerBlock(n_embd, n_head, dropout) for _ in range(n_layer)
+            TransformerBlock(n_embd, n_head, dropout) 
+            for _ in range(n_layer)
         ])
         
+        # Final layer norm and output projection
         self.ln_f = nn.LayerNorm(n_embd)
         self.output_projection = nn.Linear(n_embd, vocab_size, bias=False)
-        self.output_projection.weight = self.token_embeddings.weight
-    
-    def forward(self, input_tokens):
-        B, T = input_tokens.shape
         
-        token_emb = self.token_embeddings(input_tokens)
-        pos_emb = self.position_embeddings(torch.arange(T, device=input_tokens.device))
+        # Initialize weights
+        self._init_weights()
         
-        x = token_emb + pos_emb
-        x = self.dropout(x)
-        
-        for block in self.blocks:
-            x = block(x)
-        
-        x = self.ln_f(x)
-        logits = self.output_projection(x)
-        
-        return logits`,
+        # Count parameters
+        n_params = sum(p.numel() for p in self.parameters())
+        print(f"GPT Model created: {n_params:,} parameters")`,
         category: 'model',
         complexity: 'high'
       },
       {
         id: 'prepare_gpt_data',
-        name: 'prepare_data_for_gpt_training',
-        description: 'Prepares data for GPT model training with chunks',
+        name: 'prepare_gpt_data',
+        description: 'Prepares overlapping sequences for GPT training with 50% overlap for better data utilization',
         inputs: ['token_stream', 'chunk_size', 'batch_size'],
         outputs: ['input_batches', 'target_batches'],
-        implementation: `def prepare_data_for_gpt_training(token_stream, chunk_size, batch_size):
-    chunks = []
-    for i in range(0, len(token_stream) - chunk_size, chunk_size):
-        chunk = token_stream[i:i + chunk_size + 1]
-        if len(chunk) == chunk_size + 1:
-            chunks.append(chunk)
+        implementation: `def prepare_gpt_data(token_stream, chunk_size, batch_size):
+    if len(token_stream) < chunk_size + 1:
+        print(f"Warning: Token stream too short ({len(token_stream)}) for chunk size {chunk_size}")
+        return [], []
     
+    # Create overlapping sequences for better data utilization
+    sequences = []
+    stride = chunk_size // 2  # 50% overlap (reduced from 75%)
+    
+    for i in range(0, len(token_stream) - chunk_size, stride):
+        sequence = token_stream[i:i + chunk_size + 1]
+        if len(sequence) == chunk_size + 1:
+            sequences.append(sequence)
+    
+    print(f"Created {len(sequences)} training sequences")
+    np.random.shuffle(sequences)
+    
+    # Create batches
     input_batches = []
     target_batches = []
     
-    for i in range(0, len(chunks), batch_size):
-        batch_chunks = chunks[i:i + batch_size]
-        if len(batch_chunks) == batch_size:
-            batch_input = torch.tensor([chunk[:-1] for chunk in batch_chunks], dtype=torch.long)
-            batch_target = torch.tensor([chunk[1:] for chunk in batch_chunks], dtype=torch.long)
+    for i in range(0, len(sequences), batch_size):
+        batch_sequences = sequences[i:i + batch_size]
+        if len(batch_sequences) >= batch_size // 2:  # Allow smaller final batch
+            batch_input = torch.tensor([seq[:-1] for seq in batch_sequences], dtype=torch.long)
+            batch_target = torch.tensor([seq[1:] for seq in batch_sequences], dtype=torch.long)
             input_batches.append(batch_input)
             target_batches.append(batch_target)
     
+    print(f"Created {len(input_batches)} training batches")
     return input_batches, target_batches`,
         category: 'data',
         complexity: 'medium'
       },
       {
         id: 'train_gpt',
-        name: 'train_neural_model',
-        description: 'Trains GPT model with early stopping',
-        inputs: ['model', 'input_batches', 'target_batches', 'optimizer', 'max_iterations', 'patience', 'device'],
+        name: 'train_gpt_model',
+        description: 'Trains GPT model with validation monitoring and early stopping',
+        inputs: ['model', 'train_batches', 'target_batches', 'valid_batches', 'valid_target_batches', 'optimizer', 'max_iterations', 'device'],
         outputs: ['training_history'],
-        implementation: `# Uses the same training function as Task 3
-# but with GPT-specific data preparation and loss calculation`,
+        implementation: `def train_gpt_model(model, train_batches, target_batches, valid_batches, valid_target_batches, optimizer, max_iterations, device):
+    model.train()
+    model.to(device)
+    
+    history = {'losses': [], 'val_losses': [], 'perplexities': [], 'val_perplexities': []}
+    best_val_loss = float('inf')
+    patience_counter = 0
+    best_model_state = None
+    
+    # Training loss tracking for early stopping
+    best_train_loss = float('inf')
+    train_patience_counter = 0
+    
+    for iteration in range(max_iterations):
+        batch_idx = np.random.randint(0, len(train_batches))
+        input_batch = train_batches[batch_idx].to(device)
+        target_batch = target_batches[batch_idx].to(device)
+        
+        # Training step
+        optimizer.zero_grad()
+        loss = model.calculate_loss(input_batch, target_batch)
+        
+        if torch.isnan(loss):
+            print(f"NaN loss at iteration {iteration}! Stopping.")
+            break
+        
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        
+        # Record metrics and early stopping logic
+        loss_val = loss.item()
+        history['losses'].append(loss_val)
+        history['perplexities'].append(math.exp(loss_val))`,
         category: 'training',
         complexity: 'high'
       },
       {
         id: 'generate_text',
         name: 'generate',
-        description: 'Generates text using trained GPT model',
-        inputs: ['model', 'context_tokens', 'max_tokens', 'temperature', 'top_k'],
+        description: 'Generates text using trained GPT model with advanced sampling techniques',
+        inputs: ['context_tokens', 'max_tokens', 'temperature', 'top_k', 'top_p'],
         outputs: ['generated_tokens'],
-        implementation: `def generate(self, context_tokens, max_tokens, temperature=1.0, top_k=None):
+        implementation: `def generate(self, context_tokens, max_tokens, temperature=1.0, top_k=50, top_p=0.9):
     self.eval()
     generated = context_tokens.copy()
+    device = next(self.parameters()).device
     
     with torch.no_grad():
         for _ in range(max_tokens):
-            input_seq = torch.tensor(generated[-self.chunk_size:], dtype=torch.long, device=next(self.parameters()).device)
-            input_seq = input_seq.unsqueeze(0)
+            # Use last chunk_size tokens as context
+            input_seq = torch.tensor(generated[-self.chunk_size:], 
+                                   dtype=torch.long, device=device).unsqueeze(0)
             
-            logits = self.forward(input_seq)
-            logits = logits[0, -1, :]
+            # Get logits for next token
+            logits = self.forward(input_seq)[0, -1, :]
             
-            logits = logits / temperature
+            # Apply temperature
+            if temperature != 1.0:
+                logits = logits / temperature
             
-            if top_k is not None:
-                top_k_logits, top_k_indices = torch.topk(logits, top_k)
+            # Apply top-k filtering
+            if top_k > 0:
+                top_k_logits, top_k_indices = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits = torch.full_like(logits, float('-inf'))
                 logits[top_k_indices] = top_k_logits
             
+            # Apply top-p (nucleus) filtering  
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # Remove tokens with cumulative probability above threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[1:] = sorted_indices_to_remove[:-1].clone()
+                sorted_indices_to_remove[0] = 0
+                
+                indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                logits[indices_to_remove] = float('-inf')
+            
+            # Sample from the filtered distribution
             probs = F.softmax(logits, dim=-1)
             next_token = torch.multinomial(probs, 1).item()
-            
             generated.append(next_token)
-            
-            if next_token == 0:
-                break
     
     return generated`,
         category: 'evaluation',
@@ -601,6 +669,7 @@ tokens = bpe.encode(text)`,
     ],
     edges: [
       { source: 'causal_attention', target: 'transformer_block', label: 'attention layer' },
+      { source: 'mlp_layer', target: 'transformer_block', label: 'feed-forward' },
       { source: 'transformer_block', target: 'gpt_model', label: 'transformer blocks' },
       { source: 'prepare_gpt_data', target: 'gpt_model', label: 'training data' },
       { source: 'gpt_model', target: 'train_gpt', label: 'model' },

@@ -333,11 +333,11 @@ def main():
                             'weight_decay': weight_decay,
                             'val_perplexity': val_perplexity,
                             'training_history': history,
-                            'checkpoint_path': f'neural_bigram_{merge_count}_{config_key}.pt'  # Save checkpoint path
+                            'checkpoint_path': f'task3_{merge_count}_{config_key}.pt'  # Better naming convention
                         }
                         
                         # Save the trained model checkpoint
-                        torch.save(model.state_dict(), f'neural_bigram_{merge_count}_{config_key}.pt')
+                        torch.save(model.state_dict(), f'task3_{merge_count}_{config_key}.pt')
                         
                         # Update best configuration
                         if val_perplexity < best_val_perplexity:
@@ -383,10 +383,10 @@ def main():
             # Update results with test perplexity
             hyperparameter_results[best_config]['test_perplexity'] = test_perplexity
             hyperparameter_results[best_config]['final_training_history'] = final_history
-            hyperparameter_results[best_config]['final_checkpoint_path'] = f'neural_bigram_{merge_count}_{best_config}_final.pt'
+            hyperparameter_results[best_config]['final_checkpoint_path'] = f'task3_{merge_count}_{best_config}_final.pt'
             
             # Save the final best model
-            torch.save(model.state_dict(), f'neural_bigram_{merge_count}_{best_config}_final.pt')
+            torch.save(model.state_dict(), f'task3_{merge_count}_{best_config}_final.pt')
         
         # Store results for this merge count
         results[merge_count] = {

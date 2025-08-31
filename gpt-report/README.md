@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GPT Implementation Report
+
+This is an interactive report showcasing the implementation of a complete GPT (Generative Pre-trained Transformer) model from scratch. The project breaks down the transformer architecture into four fundamental tasks, providing hands-on experience with each component.
+
+## Project Overview
+
+The project implements a complete GPT model through four progressive tasks:
+
+1. **Task 1: BPE Tokenization** - Byte Pair Encoding for efficient text tokenization
+2. **Task 2: N-gram Language Modeling** - Statistical language modeling with n-gram approaches  
+3. **Task 3: Neural Bigram Model** - Neural network implementation for bigram language modeling
+4. **Task 4: GPT Architecture** - Complete transformer implementation with attention mechanisms and text generation
+
+## Features
+
+- **Interactive Flow Diagrams** - Visual representation of each task's implementation
+- **Code Snippets** - Real implementation code from the actual Python files
+- **Results Analysis** - Performance metrics and evaluation results
+- **Architecture Details** - Comprehensive breakdown of transformer components
 
 ## Getting Started
 
-First, run the development server:
+First, install dependencies:
+
+```bash
+npm install
+# or
+yarn install
+```
+
+Then run the development server:
 
 ```bash
 npm run dev
 # or
 yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the interactive report.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Technical Details
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Frontend**: Next.js with TypeScript
+- **UI Components**: Custom React components with Tailwind CSS
+- **Data**: Real implementation results from Python GPT training
+- **Architecture**: Component-based design with interactive flow diagrams
+
+## Project Structure
+
+- `src/app/` - Main application pages
+- `src/components/` - Interactive components including TaskFlow and NodeDetailsDrawer
+- `src/data/` - Report data and task definitions
+- `src/lib/` - Utility functions and helpers
 
 ## Learn More
 
-To learn more about Next.js, take a look at the following resources:
+This project demonstrates:
+- Transformer architecture implementation from scratch
+- Attention mechanisms and multi-head attention
+- Position embeddings and causal masking
+- Advanced text generation with sampling techniques
+- Training optimization and early stopping strategies
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The implementation provides a solid foundation for understanding modern language models and experimenting with transformer architectures.

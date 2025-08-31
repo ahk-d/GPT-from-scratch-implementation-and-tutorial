@@ -263,12 +263,21 @@ def main():
                 'val_perplexity': val_perplexity,
                 'test_perplexity': test_perplexity,
                 'interpolation_weights': ngram_model.interpolation_weights.tolist(),
-                'model_path': f'ngram_model_{merge_count}_{n}.pkl'  # Save model path
+                'model_path': f'task2_{merge_count}_{n}.pkl'  # Better naming convention
             }
             
-            # Save the trained n-gram model
-            with open(f'ngram_model_{merge_count}_{n}.pkl', 'wb') as f:
-                pickle.dump(ngram_model, f)
+            # Save the trained n-gram model - save only the data, not the class
+            model_data = {
+                'ngram_counts': ngram_model.ngram_counts,
+                'context_counts': ngram_model.context_counts,
+                'interpolation_weights': ngram_model.interpolation_weights.tolist(),
+                'vocab_size': ngram_model.vocab_size,
+                'n_order': ngram_model.n_order,
+                'alpha': ngram_model.alpha,
+                'unk_strategy': ngram_model.unk_strategy
+            }
+            with open(f'task2_{merge_count}_{n}.pkl', 'wb') as f:
+                pickle.dump(model_data, f)
             
             print(f"    Val Perplexity = {val_perplexity:.4f}, Test={test_perplexity:.4f}")
         
