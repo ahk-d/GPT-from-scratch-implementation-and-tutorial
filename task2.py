@@ -11,7 +11,7 @@ import pickle
 from utils import load_and_slice_data, load_cached_bpe, save_results, GEN_CONTEXT
 
 # Config
-PERCENTAGE = 0.1               # 10% of dataset
+PERCENTAGE = 1               # 10% of dataset
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]      # only 2000 and 3000
 N_GRAM_ORDERS = [1, 2, 3, 4]

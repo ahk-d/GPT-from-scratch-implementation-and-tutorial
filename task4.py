@@ -10,10 +10,12 @@ import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import math
+import matplotlib.pyplot as plt
+import os
 from utils import load_and_slice_data, load_cached_bpe, save_results, GEN_CONTEXT
 
 # Config
-PERCENTAGE = 0.1  # Tiny percentage for testing
+PERCENTAGE = 1  # Tiny percentage for testing
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]  # Only test one merge count
 BATCH_SIZE = 16  # Smaller batch for testing
@@ -34,6 +36,9 @@ GPT_CONFIG = {
 # Generation config
 GEN_MAX_TOKENS = 15
 GEN_TEMPERATURE = 0.7
+
+# Create plots directory
+os.makedirs('task4_plots', exist_ok=True)
 
 class CausalSelfAttention(nn.Module):
     """Multi-head causal self-attention"""
@@ -309,6 +314,35 @@ def train_model(model, train_batches, target_batches, valid_batches, valid_targe
     
     return history
 
+def plot_training_history(history, merges, lr, save_path):
+    """Plot loss and perplexity over iterations"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot training loss
+    ax1.plot(history['losses'], label='Train Loss', alpha=0.7)
+    if history['val_losses']:
+        val_x = np.arange(0, len(history['losses']), VALIDATION_INTERVAL)
+        ax1.plot(val_x, history['val_losses'], label='Val Loss', marker='o', markersize=3)
+    ax1.set_title(f'GPT Loss vs Iterations (Merges={merges}, LR={lr})')
+    ax1.set_xlabel('Iterations')
+    ax1.set_ylabel('Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot perplexity
+    ax2.plot(history['perplexities'], label='Train Perplexity', alpha=0.7)
+    if history['val_perplexities']:
+        ax2.plot(val_x, history['val_perplexities'], label='Val Perplexity', marker='o', markersize=3)
+    ax2.set_title(f'GPT Perplexity vs Iterations (Merges={merges}, LR={lr})')
+    ax2.set_xlabel('Iterations')
+    ax2.set_ylabel('Perplexity')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
 def main():
     print("Task 4: GPT Implementation (Ultra Compact)")
     print("=" * 50)
@@ -360,6 +394,11 @@ def main():
         history = train_model(model, train_batches, train_target_batches,
                             valid_batches, valid_target_batches, optimizer,
                             MAX_ITERATIONS, device)
+        
+        # Plot training history
+        plot_path = f'task4_plots/task4_merges{merges}_lr{LEARNING_RATE}.png'
+        plot_training_history(history, merges, LEARNING_RATE, plot_path)
+        print(f"  Plot saved: {plot_path}")
         
         # Evaluate final perplexity
         model.eval()

@@ -9,10 +9,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import matplotlib.pyplot as plt
+import os
 from utils import load_and_slice_data, load_cached_bpe, save_results, GEN_CONTEXT
 
 # Config
-PERCENTAGE = 0.1
+PERCENTAGE = 1
 BEST_NORMALIZATION = "lower_nopunct"
 MERGE_COUNTS = [1000, 2000]   # Only test one merge count
 EMBEDDING_DIMS = [64]   # Only test one embedding dim
@@ -26,6 +28,9 @@ VALIDATION_INTERVAL = 100
 # Generation config
 GEN_MAX_TOKENS = 20
 GEN_TEMPERATURE = 0.7
+
+# Create plots directory
+os.makedirs('task3_plots', exist_ok=True)
 
 class NeuralBigramModel(nn.Module):
     """Neural bigram model with embedding + linear projection"""
@@ -149,6 +154,35 @@ def train_model(model, train_batches, valid_batches, optimizer,
     
     return history
 
+def plot_training_history(history, merges, lr, save_path):
+    """Plot loss and perplexity over iterations"""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot training loss
+    ax1.plot(history['losses'], label='Train Loss', alpha=0.7)
+    if history['val_losses']:
+        val_x = np.arange(0, len(history['losses']), VALIDATION_INTERVAL)
+        ax1.plot(val_x, history['val_losses'], label='Val Loss', marker='o', markersize=3)
+    ax1.set_title(f'Loss vs Iterations (Merges={merges}, LR={lr})')
+    ax1.set_xlabel('Iterations')
+    ax1.set_ylabel('Loss')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot perplexity
+    ax2.plot(history['perplexities'], label='Train Perplexity', alpha=0.7)
+    if history['val_perplexities']:
+        ax2.plot(val_x, history['val_perplexities'], label='Val Perplexity', marker='o', markersize=3)
+    ax2.set_title(f'Perplexity vs Iterations (Merges={merges}, LR={lr})')
+    ax2.set_xlabel('Iterations')
+    ax2.set_ylabel('Perplexity')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+
 def evaluate_model(model, batches, device):
     """Evaluate model perplexity"""
     model.eval()
@@ -231,34 +265,43 @@ def main():
         vocab_size = len(bpe.vocab)
         print(f"  Vocab size={vocab_size}, train tokens={len(train_ids)}")
         
-        # Single configuration training
-        emb_dim, batch_size, lr, weight_decay = EMBEDDING_DIMS[0], BATCH_SIZES[0], LEARNING_RATES[0], WEIGHT_DECAY_VALUES[0]
-        print(f"  Training: emb_dim={emb_dim}, batch={batch_size}, lr={lr}")
-        
-        # Prepare data
-        train_batches = prepare_data(train_ids, batch_size, device)
-        valid_batches = prepare_data(valid_ids, batch_size, device)
-        test_batches = prepare_data(test_ids, batch_size, device)
-        
-        # Create and train model
-        model = NeuralBigramModel(vocab_size, emb_dim).to(device)
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-        
-        # Train
-        history = train_model(model, train_batches, valid_batches, optimizer,
-                            MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device, VALIDATION_INTERVAL)
-        
-        # Evaluate
-        val_perplexity = evaluate_model(model, valid_batches, device)
-        test_perplexity = evaluate_model(model, test_batches, device)
-        print(f"  val_ppl={val_perplexity:.2f} | test_ppl={test_perplexity:.2f}")
-        
-        # Generate sample
-        generated = generate_text(model, bpe, GEN_CONTEXT, GEN_MAX_TOKENS, GEN_TEMPERATURE)
-        print(f"  [Generated]: {generated}")
-        
-        # Save model
-        torch.save(model.state_dict(), f"task3_{merges}_final.pt")
+        # Train with different learning rates
+        for lr in LEARNING_RATES:
+            print(f"  Training with LR={lr}")
+            
+            # Single configuration training
+            emb_dim, batch_size, weight_decay = EMBEDDING_DIMS[0], BATCH_SIZES[0], WEIGHT_DECAY_VALUES[0]
+            print(f"    Config: emb_dim={emb_dim}, batch={batch_size}")
+            
+            # Prepare data
+            train_batches = prepare_data(train_ids, batch_size, device)
+            valid_batches = prepare_data(valid_ids, batch_size, device)
+            test_batches = prepare_data(test_ids, batch_size, device)
+            
+            # Create and train model
+            model = NeuralBigramModel(vocab_size, emb_dim).to(device)
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+            
+            # Train
+            history = train_model(model, train_batches, valid_batches, optimizer,
+                                MAX_ITERATIONS, EARLY_STOPPING_PATIENCE, device, VALIDATION_INTERVAL)
+            
+            # Plot training history
+            plot_path = f'task3_plots/task3_merges{merges}_lr{lr}.png'
+            plot_training_history(history, merges, lr, plot_path)
+            print(f"    Plot saved: {plot_path}")
+            
+            # Evaluate
+            val_perplexity = evaluate_model(model, valid_batches, device)
+            test_perplexity = evaluate_model(model, test_batches, device)
+            print(f"    val_ppl={val_perplexity:.2f} | test_ppl={test_perplexity:.2f}")
+            
+            # Generate sample
+            generated = generate_text(model, bpe, GEN_CONTEXT, GEN_MAX_TOKENS, GEN_TEMPERATURE)
+            print(f"    [Generated]: {generated}")
+            
+            # Save model
+            torch.save(model.state_dict(), f"task3_{merges}_lr{lr}_final.pt")
     
     print("\nTask 3 completed!")
 

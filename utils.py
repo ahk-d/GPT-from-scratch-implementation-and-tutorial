@@ -12,7 +12,7 @@ import math
 import pickle
 
 # Unified generation context for all tasks
-GEN_CONTEXT = "Hope clad in patience abideth the storm till fairer winds do"
+GEN_CONTEXT = "in patience lies the fortress of hope"
 
 
 def load(path):
