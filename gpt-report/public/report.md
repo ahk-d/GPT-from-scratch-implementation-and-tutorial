@@ -538,6 +538,53 @@ def train_bpe(text, vocab_size, min_freq=2):
 
 **Explanation:** This function implements the core BPE algorithm. It starts with individual characters and iteratively merges the most frequent adjacent pairs until reaching the target vocabulary size. The `get_pairs()` function identifies all adjacent token pairs, and `merge_vocab()` combines them into new tokens.
 
+**Key Components:**
+- **Vocabulary Initialization**: Starts with character-level tokens (a, b, c, ..., z, space, punctuation)
+- **Pair Counting**: Identifies adjacent token pairs and their frequencies
+- **Iterative Merging**: Repeatedly merges the most frequent pair until target vocab size is reached
+- **Merge Storage**: Keeps track of all merges for later encoding/decoding
+
+**BPE Encoding Process:**
+```python
+def encode(self, text):
+    """Encode text using learned BPE merges"""
+    words = text.split()
+    encoded = []
+    
+    for word in words:
+        # Start with individual characters
+        pieces = list(word)
+        
+        # Apply all learned merges
+        for pair in self.merges:
+            while True:
+                # Find and merge the most frequent pair
+                merged = self._merge_pair(pieces, pair)
+                if merged == pieces:  # No more merges possible
+                    break
+                pieces = merged
+        
+        # Add end-of-word marker
+        if pieces:
+            pieces[-1] += self.end_of_word  # Attach __ to last piece
+            encoded.extend(pieces)
+    
+    return encoded
+```
+
+**BPE Decoding Process:**
+```python
+def decode(self, tokens):
+    """Decode BPE tokens back to text"""
+    text = ""
+    for token in tokens:
+        # Remove end-of-word marker
+        clean_token = token.replace(self.end_of_word, "")
+        text += clean_token
+    
+    return text
+```
+
 ### Task 2: N-gram Model
 
 ```python
@@ -564,6 +611,57 @@ class NGramModel:
 
 **Explanation:** The NGramModel class implements statistical language modeling. It counts n-gram occurrences and their contexts during training, then uses these counts to estimate conditional probabilities. The `probability()` method implements the fundamental equation P(token|context) = count(ngram) / count(context).
 
+**Key Components:**
+- **N-gram Order**: Determines context length (unigram=1, bigram=2, trigram=3, etc.)
+- **Count Storage**: Maintains frequency counts for n-grams and their contexts
+- **Laplace Smoothing**: Adds +1 to all counts to handle unseen combinations
+
+**Training Process:**
+```python
+def train(self, text):
+    """Train n-gram model on text"""
+    tokens = text.split()
+    
+    # Count all n-grams and their contexts
+    for i in range(len(tokens) - self.n + 1):
+        ngram = tuple(tokens[i:i+self.n])        # Full n-gram
+        context = tuple(tokens[i:i+self.n-1])    # Context (n-1 tokens)
+        
+        self.counts[ngram] += 1                  # Count n-gram
+        self.context_counts[context] += 1        # Count context
+```
+
+**Probability Calculation with Smoothing:**
+```python
+def probability(self, context, token):
+    """Calculate P(token|context) with Laplace smoothing"""
+    ngram = context + (token,)
+    
+    # Laplace smoothing: add +1 to all counts
+    numerator = self.counts.get(ngram, 0) + 1
+    denominator = self.context_counts.get(context, 0) + self.vocab_size
+    
+    return numerator / denominator
+```
+
+**Interpolation for Higher-Order N-grams:**
+```python
+def interpolated_probability(self, context, token):
+    """Use interpolation to combine different n-gram orders"""
+    probs = []
+    weights = [0.1, 0.2, 0.3, 0.4]  # Learned weights
+    
+    # Get probabilities from different n-gram orders
+    for n in range(1, len(context) + 2):
+        n_context = context[-(n-1):] if n > 1 else ()
+        prob = self._get_ngram_prob(n_context, token)
+        probs.append(prob)
+    
+    # Weighted combination
+    final_prob = sum(w * p for w, p in zip(weights, probs))
+    return final_prob
+```
+
 ### Task 3: Neural Bigram Model
 
 ```python
@@ -582,6 +680,68 @@ class NeuralBigramModel(nn.Module):
 ```
 
 **Explanation:** This neural model replaces count-based statistics with learned embeddings. The embedding layer converts discrete token indices into continuous vector representations, capturing semantic relationships. The linear layer projects these embeddings back to vocabulary space to predict the next token. This approach can generalize to unseen word combinations.
+
+**Key Components:**
+- **Embedding Layer**: Converts token IDs to dense vectors (vocab_size × embedding_dim)
+- **Linear Projection**: Maps embeddings back to vocabulary space for next-token prediction
+- **Cross-Entropy Loss**: Standard loss function for language modeling
+
+**Training Process:**
+```python
+def train_step(self, batch):
+    """Single training step"""
+    input_tokens = batch[:, :-1]  # All tokens except last
+    target_tokens = batch[:, 1:]  # All tokens except first
+    
+    # Forward pass
+    logits = self(input_tokens)  # (batch_size, seq_len, vocab_size)
+    
+    # Reshape for loss calculation
+    logits = logits.view(-1, self.vocab_size)      # (batch_size * seq_len, vocab_size)
+    targets = target_tokens.view(-1)                # (batch_size * seq_len)
+    
+    # Calculate loss
+    loss = F.cross_entropy(logits, targets)
+    return loss
+```
+
+**Loss Function Details:**
+```python
+def compute_loss(self, logits, targets):
+    """Compute cross-entropy loss with optional label smoothing"""
+    # Standard cross-entropy
+    loss = F.cross_entropy(logits, targets, ignore_index=-1)
+    
+    # Optional: Label smoothing for regularization
+    if self.label_smoothing > 0:
+        # Create uniform distribution over vocabulary
+        uniform = torch.ones_like(logits) / logits.size(-1)
+        smooth_loss = F.cross_entropy(logits, uniform, reduction='none').mean(dim=-1)
+        loss = (1 - self.label_smoothing) * loss + self.label_smoothing * smooth_loss.mean()
+    
+    return loss
+```
+
+**Optimization and Regularization:**
+```python
+def configure_optimizers(self):
+    """Configure optimizer with learning rate scheduling"""
+    optimizer = torch.optim.AdamW(
+        self.parameters(),
+        lr=self.learning_rate,
+        weight_decay=self.weight_decay,
+        betas=(0.9, 0.999)
+    )
+    
+    # Cosine learning rate decay
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=self.max_epochs,
+        eta_min=self.learning_rate * 0.1
+    )
+    
+    return {"optimizer": optimizer, "lr_scheduler": scheduler}
+```
 
 ### Task 4: GPT Transformer Architecture
 
@@ -629,6 +789,65 @@ class CausalSelfAttention(nn.Module):
 
 **Explanation:** This implements the core self-attention mechanism. The input is projected into Query, Key, and Value matrices, then reshaped for multi-head processing. The attention scores are computed as QK^T/√d_k, with a causal mask preventing the model from seeing future tokens. The softmax creates attention weights that are applied to the values, and the result is projected back to the original dimension.
 
+**Key Components:**
+- **Multi-Head Attention**: Parallel attention mechanisms with different learned projections
+- **Causal Masking**: Prevents looking at future tokens during training/inference
+- **Scaled Dot-Product**: Normalizes attention scores by √d_k for stable gradients
+
+**Attention Mechanism Details:**
+```python
+def scaled_dot_product_attention(self, q, k, v, mask=None):
+    """Compute scaled dot-product attention"""
+    # Calculate attention scores: Q * K^T / sqrt(d_k)
+    scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.head_dim)
+    
+    # Apply causal mask (lower triangular)
+    if mask is not None:
+        scores = scores.masked_fill(mask, float('-inf'))
+    
+    # Softmax to get attention weights
+    attention_weights = F.softmax(scores, dim=-1)
+    attention_weights = self.dropout(attention_weights)
+    
+    # Apply attention weights to values
+    output = torch.matmul(attention_weights, v)
+    return output
+```
+
+**Causal Masking Implementation:**
+```python
+def create_causal_mask(self, seq_len):
+    """Create causal mask for autoregressive generation"""
+    # Create upper triangular matrix (1s above diagonal, 0s below)
+    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1)
+    
+    # Convert to boolean mask (True = masked, False = visible)
+    causal_mask = mask.bool()
+    
+    return causal_mask
+```
+
+**Multi-Head Processing:**
+```python
+def multi_head_attention(self, x):
+    """Process input through multiple attention heads"""
+    B, T, C = x.shape
+    
+    # Project to Q, K, V for each head
+    q = self.query(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+    k = self.key(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+    v = self.value(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+    
+    # Apply attention for each head
+    attn_output = self.scaled_dot_product_attention(q, k, v, self.causal_mask)
+    
+    # Concatenate heads and project back
+    attn_output = attn_output.transpose(1, 2).contiguous().view(B, T, C)
+    output = self.output(attn_output)
+    
+    return output
+```
+
 ```python
 class GPTModel(nn.Module):
     def __init__(self, vocab_size, n_embd, n_head, n_layer, chunk_size, dropout=0.1):
@@ -675,3 +894,78 @@ class GPTModel(nn.Module):
 ```
 
 **Explanation:** The GPTModel combines all components: token embeddings capture word meaning, position embeddings provide sequence order information, and multiple transformer blocks process the input through self-attention and feed-forward layers. The final layer norm stabilizes training, and the output projection maps back to vocabulary space for next-token prediction.
+
+**Key Components:**
+- **Token Embeddings**: Learnable vectors for each vocabulary token
+- **Position Embeddings**: Fixed sinusoidal or learnable position encodings
+- **Transformer Blocks**: Stack of self-attention + feed-forward layers
+- **Layer Normalization**: Stabilizes training by normalizing activations
+- **Residual Connections**: Help with gradient flow in deep networks
+
+**Feed-Forward Network:**
+```python
+class FeedForward(nn.Module):
+    """Feed-forward network with residual connection"""
+    def __init__(self, n_embd, dropout=0.1):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, 4 * n_embd),  # Expand dimension
+            nn.GELU(),                        # Activation function
+            nn.Linear(4 * n_embd, n_embd),   # Project back
+            nn.Dropout(dropout)
+        )
+    
+    def forward(self, x):
+        return self.net(x)
+```
+
+**Transformer Block:**
+```python
+class TransformerBlock(nn.Module):
+    """Complete transformer block with attention and feed-forward"""
+    def __init__(self, n_embd, n_head, dropout=0.1):
+        super().__init__()
+        self.attention = CausalSelfAttention(n_embd, n_head, dropout)
+        self.feed_forward = FeedForward(n_embd, dropout)
+        self.ln1 = nn.LayerNorm(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x):
+        # Self-attention with residual connection
+        x = x + self.dropout(self.attention(self.ln1(x)))
+        
+        # Feed-forward with residual connection
+        x = x + self.dropout(self.feed_forward(self.ln2(x)))
+        
+        return x
+```
+
+**Text Generation Process:**
+```python
+def generate(self, context, max_new_tokens, temperature=1.0, top_k=None):
+    """Generate text autoregressively"""
+    self.eval()
+    with torch.no_grad():
+        # Start with context
+        tokens = context.clone()
+        
+        for _ in range(max_new_tokens):
+            # Get predictions for next token
+            logits = self(tokens.unsqueeze(0))  # Add batch dimension
+            logits = logits[:, -1, :] / temperature  # Last token, apply temperature
+            
+            # Optional: Top-k sampling
+            if top_k is not None:
+                top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
+                logits = logits.scatter(-1, top_k_indices, top_k_logits)
+            
+            # Sample next token
+            probs = F.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
+            
+            # Append to sequence
+            tokens = torch.cat([tokens, next_token.squeeze()])
+        
+        return tokens
+```
