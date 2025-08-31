@@ -478,25 +478,51 @@ def main():
                 MAX_ITERATIONS, device
             )
             
-            # Save the trained model
-            model_path = f'gpt_model_{merge_count}_{config_name.lower().replace("-", "_")}.pt'
-            torch.save({
+            # FIXED: Proper model saving with verification
+            print(f"Saving {config_name} model...")
+            
+            # Create model save dictionary
+            model_save_dict = {
                 'model_state_dict': gpt_model.state_dict(),
-                'config': config,
+                'model_config': config,
                 'vocab_size': vocab_size,
                 'token_to_id': token_to_id,
                 'id_to_token': id_to_token,
-                'bpe_merge_count': merge_count
-            }, model_path)
+                'merge_count': merge_count,
+                'config_name': config_name,
+                'training_history': history,
+                'model_class': 'GPTModel'
+            }
             
-            # Generate sample text to verify model works
+            # Save with consistent naming
+            model_filename = f'gpt_model_merge{merge_count}_{config_name.lower().replace("-", "_")}.pt'
+            
+            try:
+                torch.save(model_save_dict, model_filename)
+                
+                # Verify the file was actually saved
+                if os.path.exists(model_filename):
+                    file_size = os.path.getsize(model_filename) / (1024*1024)
+                    print(f"Model saved successfully: {model_filename} ({file_size:.1f} MB)")
+                    
+                    # Test loading to ensure it works
+                    test_checkpoint = torch.load(model_filename, map_location='cpu')
+                    print(f"Model save verification passed")
+                    model_path = model_filename
+                else:
+                    print(f"ERROR: Model file not found after saving: {model_filename}")
+                    model_path = None
+                    
+            except Exception as e:
+                print(f"ERROR saving model: {e}")
+                model_path = None
+            
+            # Generate sample text
             context = "to be or not to be"
             context_tokens = bpe.encode(context)
             context_ids = [token_to_id.get(token, 0) for token in context_tokens]
             
-            # Test different generation strategies
             generation_samples = {}
-            
             try:
                 # Conservative generation
                 generated_ids = gpt_model.generate(
@@ -513,24 +539,26 @@ def main():
                 generation_samples['creative'] = bpe.decode(generated_tokens)
                 
             except Exception as e:
-                print(f"Generation failed: {e}")
+                print(f"Warning: Generation failed: {e}")
                 generation_samples = {'error': str(e)}
             
             # Store results
+            final_val_perplexity = history['val_perplexities'][-1] if history['val_perplexities'] else float('inf')
+            
             merge_results[config_name] = {
                 'training_history': history,
                 'generation_samples': generation_samples,
                 'config': config,
-                'model_path': model_path,
+                'model_path': model_path,  # This is critical for loading later
                 'final_val_loss': history['val_losses'][-1] if history['val_losses'] else float('inf'),
-                'final_val_perplexity': history['val_perplexities'][-1] if history['val_perplexities'] else float('inf')
+                'final_val_perplexity': final_val_perplexity
             }
             
-            print(f" {config_name} training completed!")
-            print(f"Final validation perplexity: {merge_results[config_name]['final_val_perplexity']:.2f}")
+            print(f"{config_name} training completed")
+            print(f"Final validation perplexity: {final_val_perplexity:.2f}")
             print(f"Model saved to: {model_path}")
             if 'conservative' in generation_samples:
-                print(f"Sample: {generation_samples['conservative']}")
+                print(f"Sample generation: {generation_samples['conservative']}")
         
         results[merge_count] = {
             'vocab_size': vocab_size,
