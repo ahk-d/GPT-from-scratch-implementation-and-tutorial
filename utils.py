@@ -369,13 +369,7 @@ def print_configuration_summary(normalization_technique, merge_count, bpe_model,
         
         print()
         
-        # Calculate compression ratios
-        for split_name in ["train", "valid", "test"]:
-            split_results = results[split_name]
-            compression_ratio = split_results['avg_tokens_per_word'] / len(bpe_model.vocab) if len(bpe_model.vocab) > 0 else 0
-            print(f"  compression ratio: {split_name}={compression_ratio:.2f} | ", end="")
-        
-        print()
+
         
         for split_name in ["train", "valid", "test"]:
             split_results = results[split_name]

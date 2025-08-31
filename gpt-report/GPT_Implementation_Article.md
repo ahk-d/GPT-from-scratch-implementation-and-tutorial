@@ -1,13 +1,4 @@
-'use client';
-
-import { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { tomorrow } from 'react-syntax-highlighter/dist/esm/styles/prism';
-
-export default function Home() {
-  const [markdownContent] = useState(`# Building GPT from Scratch: A Comprehensive Implementation Guide
+# Building GPT from Scratch: A Comprehensive Implementation Guide
 
 ## Abstract
 
@@ -44,15 +35,15 @@ Perplexity is the primary metric used to evaluate language models. It measures h
 
 Perplexity is calculated using the following formula:
 
-\`\`\`
+```
 Perplexity = exp(-average_log_probability)
-\`\`\`
+```
 
 Where the average log probability is computed over all tokens in the test set:
 
-\`\`\`
+```
 average_log_probability = (1/N) * Σ log(P(token_i | context_i))
-\`\`\`
+```
 
 ### 2.3 Properties and Benefits
 
@@ -99,7 +90,7 @@ Consider the word "hello":
 Our BPE implementation achieved the following results:
 
 **Best Configuration:**
-- Normalization: \`lower_nopunct\`
+- Normalization: `lower_nopunct`
 - Merge count: 2000
 - Validation avg tokens/word: 1.3129
 
@@ -133,15 +124,15 @@ Higher-order n-grams capture more context but suffer from data sparsity - many n
 
 #### 4.4.1 Laplace Smoothing (Add-1)
 Add 1 to all counts to avoid zero probabilities:
-\`\`\`
+```
 P(word|context) = (count + 1) / (total + vocab_size)
-\`\`\`
+```
 
 #### 4.4.2 Interpolation
 Combine probabilities from different n-gram orders:
-\`\`\`
+```
 P(word) = λ₁P₁(word) + λ₂P₂(word) + λ₃P₃(word)
-\`\`\`
+```
 
 ### 4.5 Results
 
@@ -220,7 +211,7 @@ The key innovation is that self-attention allows the model to directly model rel
 The self-attention mechanism operates in three steps:
 
 1. **Query, Key, Value Computation**: For each position, compute Query (Q), Key (K), and Value (V) vectors using learned linear transformations
-2. **Attention Scores**: Compute attention scores: \`Attention(Q,K,V) = softmax(QK^T/√d_k)V\`, where d_k is the dimension of keys
+2. **Attention Scores**: Compute attention scores: `Attention(Q,K,V) = softmax(QK^T/√d_k)V`, where d_k is the dimension of keys
 3. **Causal Masking**: For language modeling, mask future positions to prevent the model from "cheating" by looking ahead
 
 ### 6.4 Advantages of Self-Attention
@@ -298,7 +289,7 @@ The systematic approach taken in this implementation provides valuable education
 
 ### A.1 BPE Implementation
 
-\`\`\`python
+```python
 def train_bpe(text, vocab_size, min_freq=2):
     """Train BPE on text data"""
     # Initialize with character-level vocabulary
@@ -317,11 +308,11 @@ def train_bpe(text, vocab_size, min_freq=2):
         merges.append(best_pair)
     
     return merges, vocab
-\`\`\`
+```
 
 ### A.2 N-gram Model Implementation
 
-\`\`\`python
+```python
 class NGramModel:
     def __init__(self, n):
         self.n = n
@@ -341,11 +332,11 @@ class NGramModel:
         """Calculate P(token|context)"""
         ngram = context + (token,)
         return self.counts[ngram] / self.context_counts[context]
-\`\`\`
+```
 
 ### A.3 Neural Bigram Model Implementation
 
-\`\`\`python
+```python
 class NeuralBigramModel(nn.Module):
     def __init__(self, vocab_size, embedding_dim):
         super().__init__()
@@ -358,11 +349,11 @@ class NeuralBigramModel(nn.Module):
         emb = emb.squeeze(1)     # (batch_size, embedding_dim)
         logits = self.linear(emb)  # (batch_size, vocab_size)
         return logits
-\`\`\`
+```
 
 ### A.4 Perplexity Calculation
 
-\`\`\`python
+```python
 def calculate_perplexity(model, token_stream, bos_token='<s>'):
     """Calculate perplexity on token stream"""
     stream = [bos_token] * (model.n_order - 1) + token_stream
@@ -384,38 +375,4 @@ def calculate_perplexity(model, token_stream, bos_token='<s>'):
     perplexity = np.exp(-avg_log_prob)
     
     return perplexity
-\`\`\``);
-
-  return (
-    <div className="min-h-screen bg-white">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="prose prose-lg max-w-none">
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-              code({ node, inline, className, children, ...props }) {
-                const match = /language-(\w+)/.exec(className || '');
-                return !inline && match ? (
-                  <SyntaxHighlighter
-                    style={tomorrow}
-                    language={match[1]}
-                    PreTag="div"
-                    {...props}
-                  >
-                    {String(children).replace(/\n$/, '')}
-                  </SyntaxHighlighter>
-                ) : (
-                  <code className={className} {...props}>
-                    {children}
-                  </code>
-                );
-              },
-            }}
-          >
-            {markdownContent}
-          </ReactMarkdown>
-        </div>
-      </div>
-    </div>
-  );
-}
+```
