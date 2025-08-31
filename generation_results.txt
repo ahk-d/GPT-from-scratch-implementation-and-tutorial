@@ -1,0 +1,38 @@
+Text Generation Results
+==================================================
+
+Context: shall i compare thee
+Parameters: {'max_tokens': 20, 'temperature': 1.0, 'top_k': 40}
+
+Model: ngram_merge2000_n1
+Type: n-gram
+Config: N-gram (n=1) with BPE 2000 merges, lower_nopunct normalization
+Perplexity: 9.1995
+Vocab Size: 590
+Generated Text: shallaiaaareatheeaanllwidowdshameenoughseleucusoctaviafertilepraisedonedodercetaslethushwidenewsworkylittlem
+----------------------------------------
+
+Model: ngram_merge1000_n1
+Type: n-gram
+Config: N-gram (n=1) with BPE 1000 merges, lower_nopunct normalization
+Perplexity: 10.4945
+Vocab Size: 605
+Generated Text: shallaiaaareatheeabendroomfortuneoutpalacehearapprovesfaminesirbedratherfriendslivesdomitiusoutwiessstillsuchwenches
+----------------------------------------
+
+Model: gpt_merge1000_sample
+Type: gpt
+Config: GPT with BPE 1000 merges (pre-generated sample)
+Perplexity: inf
+Vocab Size: 605
+Generated Text: to be or not to prayer of better deeds to morrow rest you happy exeunt scene ii the same another room enter charmian iras alexas and a soothsayer charmian lord alexas sweet alexas alexas alexas most like you most like you your dismission longer your come from had last last wine if it last night
+----------------------------------------
+
+Model: gpt_merge2000_sample
+Type: gpt
+Config: GPT with BPE 2000 merges (pre-generated sample)
+Perplexity: inf
+Vocab Size: 590
+Generated Text: to be or not to antony night charmian no madam cleopatra nay he marry a had a womb and fertile every wish a million charmian out fool i forgive thee for a witch witch witch witch a witch alexas witch alexas shall be love and clown think none but think none but but your stirr
+----------------------------------------
+

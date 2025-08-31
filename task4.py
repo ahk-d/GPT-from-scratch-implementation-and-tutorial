@@ -26,7 +26,7 @@ MERGE_COUNTS = [1000, 2000]
 EMBEDDING_DIMS = [64, 128, 256]
 BATCH_SIZE = 32  # Increased batch size
 LEARNING_RATE = 3e-4  # Better learning rate for transformers
-MAX_ITERATIONS = 3000  # Reduced max iterations
+MAX_ITERATIONS = 100  # Reduced max iterations
 MIN_IMPROVEMENT = 1e-4  # Minimum improvement for early stopping
 CHECKPOINT_SAVE_COUNT = 3
 GENERATION_CONTEXT = "to be or not to"
@@ -373,16 +373,20 @@ def prepare_data_for_gpt_training(token_stream, chunk_size, batch_size):
     return input_batches, target_batches
 
 def train_neural_model(model, input_batches, target_batches, optimizer, max_iterations, 
-                      device, min_improvement=MIN_IMPROVEMENT):
-    """FIXED: Better training loop without early stopping"""
+                      device, min_improvement=MIN_IMPROVEMENT, validation_batches=None, 
+                      patience=500, validation_interval=100):
+    """IMPROVED: Training loop with early stopping and overfitting detection"""
     model.train()
     model.to(device)
     
     if len(input_batches) == 0:
         print("No training batches available!")
-        return {'losses': [], 'perplexities': []}
+        return {'losses': [], 'perplexities': [], 'val_losses': [], 'val_perplexities': []}
     
-    history = {'losses': [], 'perplexities': []}
+    history = {'losses': [], 'perplexities': [], 'val_losses': [], 'val_perplexities': []}
+    best_val_loss = float('inf')
+    patience_counter = 0
+    best_model_state = None
     
     print(f"Training with {len(input_batches)} batches for {max_iterations} iterations")
     
@@ -413,8 +417,75 @@ def train_neural_model(model, input_batches, target_batches, optimizer, max_iter
         perplexity = torch.exp(loss).item()
         history['perplexities'].append(perplexity)
         
-        # Print progress
-        if iteration % 500 == 0 or iteration < 10:
+        # Validation check and early stopping
+        if validation_batches and iteration % validation_interval == 0:
+            model.eval()
+            val_loss = 0.0
+            val_batches_evaluated = 0
+            
+            with torch.no_grad():
+                for val_input, val_target in validation_batches[:5]:  # Sample validation batches
+                    val_input = val_input.to(device)
+                    val_target = val_target.to(device)
+                    val_batch_loss = model.calculate_loss(val_input, val_target)
+                    if not torch.isnan(val_batch_loss):
+                        val_loss += val_batch_loss.item()
+                        val_batches_evaluated += 1
+            
+            if val_batches_evaluated > 0:
+                val_loss /= val_batches_evaluated
+                val_perplexity = math.exp(val_loss)
+                history['val_losses'].append(val_loss)
+                history['val_perplexities'].append(val_perplexity)
+                
+                print(f"Iteration {iteration}: Train Loss = {loss_value:.4f}, "
+                      f"Val Loss = {val_loss:.4f}, Val Perplexity = {val_perplexity:.4f}")
+                
+                # Early stopping logic
+                should_stop = False
+                stop_reason = ""
+                
+                # 1. Standard patience-based stopping
+                if val_loss < best_val_loss - min_improvement:
+                    best_val_loss = val_loss
+                    patience_counter = 0
+                    best_model_state = model.state_dict().copy()
+                else:
+                    patience_counter += validation_interval
+                    
+                if patience_counter >= patience:
+                    should_stop = True
+                    stop_reason = f"patience exceeded ({patience})"
+                
+                # 2. Overfitting detection: train loss decreasing but val loss increasing
+                if len(history['val_losses']) >= 3:
+                    recent_train_losses = history['losses'][-3:]
+                    recent_val_losses = history['val_losses'][-3:]
+                    
+                    train_decreasing = recent_train_losses[-1] < recent_train_losses[0]
+                    val_increasing = recent_val_losses[-1] > recent_val_losses[0]
+                    
+                    if train_decreasing and val_increasing:
+                        should_stop = True
+                        stop_reason = "overfitting detected (train decreasing, val increasing)"
+                
+                # 3. Train-val gap becoming too large (overfitting)
+                if len(history['val_losses']) >= 2:
+                    train_val_gap = loss_value - val_loss
+                    if train_val_gap < -0.5:  # Train loss much lower than val
+                        should_stop = True
+                        stop_reason = "overfitting detected (large train-val gap)"
+                
+                if should_stop:
+                    print(f"Early stopping at iteration {iteration}: {stop_reason}")
+                    if best_model_state is not None:
+                        model.load_state_dict(best_model_state)
+                    break
+                    
+                model.train()
+        
+        # Print progress (only when not doing validation)
+        elif iteration % 500 == 0 or iteration < 10:
             print(f"Iteration {iteration}: Loss = {loss_value:.4f}, Perplexity = {perplexity:.4f}")
     
     return history
@@ -624,10 +695,10 @@ def main():
             model = NeuralBigramModel(vocab_size, embedding_dim)
             optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
             
-            # Train model
+            # Train model with validation for early stopping
             history = train_neural_model(
                 model, train_prev_batches, train_next_batches, optimizer, 
-                MAX_ITERATIONS, device
+                MAX_ITERATIONS, device, validation_batches=list(zip(val_prev_batches, val_next_batches))
             )
             
             # Evaluate on validation data
@@ -670,10 +741,10 @@ def main():
             weight_decay=GPT_CONFIG['weight_decay']
         )
         
-        # Train GPT model
+        # Train GPT model with validation for early stopping
         history = train_neural_model(
             gpt_model, train_input_batches, train_target_batches, optimizer,
-            MAX_ITERATIONS, device
+            MAX_ITERATIONS, device, validation_batches=list(zip(val_input_batches, val_target_batches))
         )
         
         # Evaluate GPT model on validation data

@@ -237,6 +237,8 @@ class BPE:
             self.vocab = set()
             for t in tokens:
                 self.vocab.update(t)
+            # Add end-of-word token to vocabulary
+            self.vocab.add(self.end_of_word)
             self.vocab = sorted(list(self.vocab))
             
             # Build token mappings

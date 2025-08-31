@@ -105,13 +105,18 @@ def prepare_data_fixed(token_stream, batch_size, device):
 def train_neural_model_fixed(model, train_batches, valid_batches, optimizer, 
                            max_iterations, patience, device, validation_interval=100):
     """
-    FIXED: Proper training with validation-based early stopping
+    IMPROVED: Training with better overfitting detection and early stopping
     """
     model.train()
     
     history = {'losses': [], 'val_losses': [], 'perplexities': [], 'val_perplexities': []}
     best_val_loss = float('inf')
     patience_counter = 0
+    best_model_state = None
+    
+    # Track overfitting indicators
+    train_val_gap = []
+    min_improvement = 1e-4
     
     for iteration in range(max_iterations):
         # Sample random training batch
@@ -144,18 +149,52 @@ def train_neural_model_fixed(model, train_batches, valid_batches, optimizer,
             history['val_losses'].append(val_loss)
             history['val_perplexities'].append(np.exp(val_loss))
             
-            print(f"Iteration {iteration}: Train Loss = {loss.item():.4f}, "
-                  f"Val Loss = {val_loss:.4f}, Val Perplexity = {np.exp(val_loss):.2f}")
+            # Calculate train-val gap for overfitting detection
+            current_train_loss = loss.item()
+            gap = current_train_loss - val_loss
+            train_val_gap.append(gap)
             
-            # Early stopping based on validation loss
-            if val_loss < best_val_loss:
+            print(f"Iteration {iteration}: Train Loss = {current_train_loss:.4f}, "
+                  f"Val Loss = {val_loss:.4f}, Val Perplexity = {np.exp(val_loss):.2f}, "
+                  f"Gap = {gap:.4f}")
+            
+            # Improved early stopping with multiple conditions
+            should_stop = False
+            stop_reason = ""
+            
+            # 1. Standard patience-based stopping
+            if val_loss < best_val_loss - min_improvement:
                 best_val_loss = val_loss
                 patience_counter = 0
+                best_model_state = model.state_dict().copy()
             else:
                 patience_counter += validation_interval
                 
             if patience_counter >= patience:
-                print(f"Early stopping at iteration {iteration} (patience={patience})")
+                should_stop = True
+                stop_reason = f"patience exceeded ({patience})"
+            
+            # 2. Overfitting detection: train loss decreasing but val loss increasing
+            if len(history['val_losses']) >= 3:
+                recent_train_losses = history['losses'][-3:]
+                recent_val_losses = history['val_losses'][-3:]
+                
+                train_decreasing = recent_train_losses[-1] < recent_train_losses[0]
+                val_increasing = recent_val_losses[-1] > recent_val_losses[0]
+                
+                if train_decreasing and val_increasing:
+                    should_stop = True
+                    stop_reason = "overfitting detected (train decreasing, val increasing)"
+            
+            # 3. Train-val gap becoming too large (overfitting)
+            if len(train_val_gap) >= 2 and train_val_gap[-1] < -0.5:  # Train loss much lower than val
+                should_stop = True
+                stop_reason = "overfitting detected (large train-val gap)"
+            
+            if should_stop:
+                print(f"Early stopping at iteration {iteration}: {stop_reason}")
+                if best_model_state is not None:
+                    model.load_state_dict(best_model_state)
                 break
                 
             model.train()
@@ -220,17 +259,19 @@ def main():
         valid_tokens = bpe.encode(valid_text)
         test_tokens = bpe.encode(test_text)
         
-        # Create token mappings - FIXED to handle all unique tokens
-        all_tokens = set(train_tokens + valid_tokens + test_tokens)
-        token_to_id = {token: i for i, token in enumerate(sorted(all_tokens))}
-        id_to_token = {i: token for token, i in token_to_id.items()}
+        # Use BPE model's vocabulary and token mappings
+        token_to_id = bpe.token2id
+        id_to_token = bpe.id2token
         
-        # Convert to IDs
-        train_ids = [token_to_id[token] for token in train_tokens]
-        valid_ids = [token_to_id[token] for token in valid_tokens]
-        test_ids = [token_to_id[token] for token in test_tokens]
+        # Convert to IDs with fallback for missing tokens
+        def safe_token_to_id(token):
+            return token_to_id.get(token, 0)  # Use 0 as fallback for unknown tokens
         
-        vocab_size = len(token_to_id)
+        train_ids = [safe_token_to_id(token) for token in train_tokens]
+        valid_ids = [safe_token_to_id(token) for token in valid_tokens]
+        test_ids = [safe_token_to_id(token) for token in test_tokens]
+        
+        vocab_size = len(bpe.vocab)  # Use BPE model's vocabulary size
         print(f"Vocabulary size: {vocab_size}")
         print(f"Training tokens: {len(train_ids)}")
         print(f"Validation tokens: {len(valid_ids)}")
