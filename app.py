@@ -6,13 +6,45 @@ import json
 import math
 import random
 import glob
+import zipfile
+import tempfile
 from collections import Counter, defaultdict
 import torch.nn as nn
 import torch.nn.functional as F
 
+# Hugging Face Spaces utilities
+def extract_results_zip():
+    """Extract results.zip if it exists for HF Spaces deployment"""
+    if os.path.exists("results.zip"):
+        print("Extracting results.zip for Hugging Face Spaces...")
+        with zipfile.ZipFile("results.zip", 'r') as zip_ref:
+            zip_ref.extractall(".")
+        print("✓ Extracted results.zip")
+        return True
+    return False
+
 # Load BPE and model utilities
 def find_bpe_file():
     """Recursively search for BPE cache file"""
+    # First try to extract from results.zip
+    extract_results_zip()
+    
+    # Exact BPE files we have
+    bpe_files = [
+        "bpe_cache_1000_flatten.pkl",
+        "bpe_cache_2000_flatten.pkl", 
+        "bpe_cache_3000_flatten.pkl",
+        "bpe_cache_2000_minimal.pkl"
+    ]
+    
+    # Check results directory first, then root
+    for bpe_file in bpe_files:
+        if os.path.exists(f"results/{bpe_file}"):
+            return f"results/{bpe_file}"
+        elif os.path.exists(bpe_file):
+            return bpe_file
+    
+    # Fallback patterns
     patterns = [
         "bpe_cache_*_lower_nopunct.pkl",
         "bpe_cache_*.pkl", 
@@ -316,7 +348,7 @@ class ModelManager:
         self.load_models()
 
     def find_model_files(self):
-        """Scan for model files with patterns matching Task 2/3/4 outputs"""
+        """Load exact models from results directory"""
         model_files = {
             'classical': [],
             'neural': [],
@@ -327,27 +359,48 @@ class ModelManager:
         # Find BPE file
         model_files['bpe'] = find_bpe_file()
         
-        # Task 2: Classical models (*.pkl files with 'classical' in name)
-        classical_patterns = ["*classical*.pkl", "task2/*.pkl"]
-        for pattern in classical_patterns:
-            files = glob.glob(pattern, recursive=True)
-            model_files['classical'].extend(files)
+        # Exact Task 2 models we have
+        classical_models = [
+            "ngram_backoff_max4_alpha0.4_flatten_1000merges.pkl",
+            "ngram_backoff_max4_alpha0.4_flatten_2000merges.pkl", 
+            "ngram_backoff_max4_alpha0.4_flatten_3000merges.pkl",
+            "ngram_backoff_max4_alpha0.4_minimal_2000merges.pkl"
+        ]
         
-        # Task 3: Neural models (*.pt files with 'neural' in name)
-        neural_patterns = ["*neural*.pt", "task3/*neural*.pt", "*n[1-4]_lr*.pt"]
-        for pattern in neural_patterns:
-            files = glob.glob(pattern, recursive=True)
-            model_files['neural'].extend(files)
+        # Exact Task 3 models we have
+        neural_models = [
+            "neural_4gram_flatten_1000merges.pt",
+            "neural_4gram_flatten_2000merges.pt",
+            "neural_4gram_flatten_3000merges.pt", 
+            "neural_4gram_minimal_2000merges.pt"
+        ]
         
-        # Task 4: GPT models (*.pt files with 'gpt' in name)
-        gpt_patterns = ["*gpt*.pt", "task4/*gpt*.pt", "*gpt*merges*.pt"]
-        for pattern in gpt_patterns:
-            files = glob.glob(pattern, recursive=True)
-            model_files['gpt'].extend(files)
+        # Exact Task 4 models we have
+        gpt_models = [
+            "gpt_flatten_1000merges.pt",
+            "gpt_flatten_2000merges.pt",
+            "gpt_flatten_3000merges.pt",
+            "gpt_minimal_2000merges.pt"
+        ]
         
-        # Remove duplicates
-        for key in ['classical', 'neural', 'gpt']:
-            model_files[key] = list(set(model_files[key]))
+        # Check which files exist
+        for model in classical_models:
+            if os.path.exists(f"results/{model}"):
+                model_files['classical'].append(f"results/{model}")
+            elif os.path.exists(model):
+                model_files['classical'].append(model)
+        
+        for model in neural_models:
+            if os.path.exists(f"results/{model}"):
+                model_files['neural'].append(f"results/{model}")
+            elif os.path.exists(model):
+                model_files['neural'].append(model)
+        
+        for model in gpt_models:
+            if os.path.exists(f"results/{model}"):
+                model_files['gpt'].append(f"results/{model}")
+            elif os.path.exists(model):
+                model_files['gpt'].append(model)
         
         print(f"Found {len(model_files['classical'])} classical model files")
         print(f"Found {len(model_files['neural'])} neural model files")
@@ -606,11 +659,17 @@ print("Initializing model manager...")
 model_manager = ModelManager()
 
 def generate_text_interface(model_type, model_name, context, max_length, temperature):
-    """Interface function for Gradio"""
+    """Interface function for Gradio with enhanced error handling"""
     if not context.strip():
-        return "Please enter some context text."
+        return "❌ Please enter some context text to generate from."
     
-    return model_manager.generate_text(model_type, model_name, context, max_length, temperature)
+    try:
+        result = model_manager.generate_text(model_type, model_name, context, max_length, temperature)
+        if not result or result.strip() == "":
+            return "⚠️ Model generated empty text. Try adjusting the temperature or context."
+        return result
+    except Exception as e:
+        return f"❌ Generation failed: {str(e)}\n\nTry a different model or adjust the parameters."
 
 def update_model_choices(model_type):
     """Update model choices based on selected type"""
@@ -628,40 +687,62 @@ def update_model_choices(model_type):
         return gr.update(choices=choices, value=default)
 
 # Create Gradio interface
-with gr.Blocks(title="Shakespeare Language Models") as demo:
-    gr.Markdown("# Shakespeare Language Model Generator")
-    gr.Markdown("Generate Shakespearean text using classical n-grams, neural networks, or GPT models!")
+with gr.Blocks(
+    title="Shakespeare Language Models",
+    theme=gr.themes.Soft(),
+    css="""
+    .gradio-container {
+        max-width: 1200px !important;
+        margin: auto !important;
+    }
+    .model-info {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 20px 0;
+    }
+    """
+) as demo:
+    gr.Markdown("# 🎭 Shakespeare Language Model Generator")
+    gr.Markdown("Generate Shakespearean text using classical n-grams, neural networks, or GPT models trained on Shakespeare's complete works!")
     
     # Display loaded models info
-    gr.Markdown(f"""
-    **Available Models:**
-    - **Classical N-grams** (Task 2): {len(model_manager.classical_models)} models
-    - **Neural N-grams** (Task 3): {len(model_manager.neural_models)} models  
-    - **GPT Models** (Task 4): {len(model_manager.gpt_models)} models
-    
-    *Models are automatically loaded from checkpoint files in the current directory.*
-    """)
-    
     with gr.Row():
         with gr.Column():
+            gr.Markdown(f"""
+            <div class="model-info">
+            <h3>📊 Available Models</h3>
+            <ul>
+            <li><strong>Classical N-grams</strong> (Task 2): {len(model_manager.classical_models)} models</li>
+            <li><strong>Neural N-grams</strong> (Task 3): {len(model_manager.neural_models)} models</li>
+            <li><strong>GPT Models</strong> (Task 4): {len(model_manager.gpt_models)} models</li>
+            </ul>
+            <p><em>Models are automatically loaded from the best performing checkpoints.</em></p>
+            </div>
+            """)
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            gr.Markdown("### ⚙️ Model Configuration")
             model_type = gr.Dropdown(
                 choices=["Classical N-gram", "Neural N-gram", "GPT"],
                 value="Classical N-gram",
-                label="Model Type",
+                label="🎯 Model Type",
                 info="Choose the type of language model"
             )
             
             model_name = gr.Dropdown(
                 choices=["No models available"],
                 value=None,
-                label="Specific Model",
+                label="🔧 Specific Model",
                 info="Select a specific model variant"
             )
             
             context = gr.Textbox(
-                label="Context/Prompt",
+                label="📝 Context/Prompt",
                 placeholder="to be or not to be",
-                lines=2,
+                lines=3,
                 info="Enter starting text for generation"
             )
             
@@ -671,7 +752,7 @@ with gr.Blocks(title="Shakespeare Language Models") as demo:
                     maximum=100,
                     value=50,
                     step=5,
-                    label="Max Length",
+                    label="📏 Max Length",
                     info="Maximum tokens to generate"
                 )
                 
@@ -680,18 +761,20 @@ with gr.Blocks(title="Shakespeare Language Models") as demo:
                     maximum=2.0,
                     value=0.8,
                     step=0.1,
-                    label="Temperature",
+                    label="🌡️ Temperature",
                     info="Randomness (higher = more creative)"
                 )
             
-            generate_btn = gr.Button("Generate Text", variant="primary", size="lg")
+            generate_btn = gr.Button("✨ Generate Text", variant="primary", size="lg")
         
-        with gr.Column():
+        with gr.Column(scale=1):
+            gr.Markdown("### 🎭 Generated Text")
             output = gr.Textbox(
-                label="Generated Text",
-                lines=10,
-                max_lines=15,
-                info="Shakespeare-style text generated by the selected model"
+                label="Shakespeare-style text generated by the selected model",
+                lines=12,
+                max_lines=20,
+                show_copy_button=True,
+                info="The model will generate text in the style of Shakespeare based on your prompt"
             )
     
     # Update model choices when type changes
@@ -709,28 +792,48 @@ with gr.Blocks(title="Shakespeare Language Models") as demo:
     )
     
     # Example prompts for different model types
+    gr.Markdown("### 💡 Example Prompts")
     gr.Examples(
         examples=[
-            ["Classical N-gram", "3gram", "to be or not to be", 50, 0.8],
-            ["Neural N-gram", "3gram", "fair is foul and foul is fair", 40, 0.9],
-            ["GPT", "medium", "wherefore art thou romeo", 60, 0.7],
-            ["Classical N-gram", "2gram", "shall I compare thee", 45, 0.6],
-            ["GPT", "small", "now is the winter", 55, 0.8],
+            ["Classical N-gram", "4gram", "to be or not to be", 50, 0.8],
+            ["Neural N-gram", "4gram", "fair is foul and foul is fair", 40, 0.9],
+            ["GPT", "4gram", "wherefore art thou romeo", 60, 0.7],
+            ["Classical N-gram", "4gram", "shall I compare thee", 45, 0.6],
+            ["GPT", "4gram", "now is the winter", 55, 0.8],
         ],
         inputs=[model_type, model_name, context, max_length, temperature],
+        label="Click any example to try it!"
     )
     
     # Footer with model info
     gr.Markdown("""
     ---
-    **Model Information:**
+    ### 📚 Model Information
     
-    - **Classical N-grams**: Statistical models using Byte-Pair Encoding with add-one smoothing and backoff
-    - **Neural N-grams**: Embedding-based neural networks trained on Shakespeare with early stopping
-    - **GPT Models**: Transformer-based autoregressive models with causal self-attention
+    **🏛️ Classical N-grams (Task 2)**: Statistical models using Byte-Pair Encoding with add-one smoothing and backoff
+    - **Best Performance**: 10.40 PPL (Flatten + 1000 merges + Backoff)
+    - **Method**: Count-based probability estimation with smoothing
+    
+    **🧠 Neural N-grams (Task 3)**: Embedding-based neural networks trained on Shakespeare with early stopping  
+    - **Best Performance**: 12.51 PPL (Flatten + 1000 merges + 4-gram)
+    - **Method**: Learned dense vector representations
+    
+    **🤖 GPT Models (Task 4)**: Transformer-based autoregressive models with causal self-attention
+    - **Best Performance**: 13.08 PPL (Flatten + 1000 merges)
+    - **Method**: Self-attention mechanism for long-range dependencies
     
     All models are trained on Shakespeare's complete works and use consistent BPE tokenization.
+    
+    **🔗 Access the full research paper**: [GPT from Scratch Implementation](https://huggingface.co/spaces/ahk-d/shakespeare-gpt)
     """)
 
 if __name__ == "__main__":
-    demo.launch()
+    # Launch with Hugging Face Spaces configuration
+    demo.launch(
+        server_name="0.0.0.0",  # Required for HF Spaces
+        server_port=7860,        # Default HF Spaces port
+        share=False,            # Don't create public link
+        show_error=True,         # Show errors in UI
+        quiet=False,            # Show startup messages
+        debug=False             # Disable debug mode for production
+    )
